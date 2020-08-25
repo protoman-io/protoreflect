@@ -1109,7 +1109,6 @@ func createEnumDescriptor(fd *FileDescriptor, parent Descriptor, ed protoreflect
 		file:           fd,
 		sourceInfoPath: append([]int32(nil), path...), // defensive copy
 	}
-	cache.put(ed, ret)
 	path = append(path, internal.Enum_valuesTag)
 	for i := 0; i < ed.Values().Len(); i++ {
 		src := ed.Values().Get(i)

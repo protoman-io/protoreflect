@@ -6,34 +6,29 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-// The global cache is used to store descriptors that wrap items in
-// protoregistry.GlobalTypes and protoregistry.GlobalFiles. This prevents
-// repeating work to re-wrap underlying global descriptors.
-var cache = globalCache{cache: mapCache{}}
-
 type descriptorCache interface {
 	get(protoreflect.Descriptor) Descriptor
 	put(protoreflect.Descriptor, Descriptor)
 }
 
-type globalCache struct {
+type lockingCache struct {
 	cacheMu sync.RWMutex
 	cache   mapCache
 }
 
-func (c *globalCache) get(d protoreflect.Descriptor) Descriptor {
+func (c *lockingCache) get(d protoreflect.Descriptor) Descriptor {
 	c.cacheMu.RLock()
 	defer c.cacheMu.RUnlock()
 	return c.cache.get(d)
 }
 
-func (c *globalCache) put(key protoreflect.Descriptor, val Descriptor) {
+func (c *lockingCache) put(key protoreflect.Descriptor, val Descriptor) {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 	c.cache.put(key, val)
 }
 
-func (c *globalCache) withLock(fn func(descriptorCache)) {
+func (c *lockingCache) withLock(fn func(descriptorCache)) {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 	// Pass the underlying mapCache. We don't want fn to use

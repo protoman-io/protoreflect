@@ -75,7 +75,7 @@ func createFileDescriptor(fd *dpb.FileDescriptorProto, deps []*FileDescriptor, r
 	//	return nil, err
 	//}
 
-	return wrapFile(d, fd, noopCache{})
+	return convertFile(d, fd, noopCache{})
 }
 
 //func cacheDeps(deps []*FileDescriptor, resolver protodesc.Resolver, cache descriptorCache) error {
@@ -94,7 +94,7 @@ func createFileDescriptor(fd *dpb.FileDescriptorProto, deps []*FileDescriptor, r
 //	return nil
 //}
 
-func wrapFile(d protoreflect.FileDescriptor, fd *dpb.FileDescriptorProto, cache descriptorCache) (*FileDescriptor, error) {
+func convertFile(d protoreflect.FileDescriptor, fd *dpb.FileDescriptorProto, cache descriptorCache) (*FileDescriptor, error) {
 	ret := &FileDescriptor{
 		wrapped:    d,
 		proto:      fd,
@@ -107,7 +107,7 @@ func wrapFile(d protoreflect.FileDescriptor, fd *dpb.FileDescriptorProto, cache 
 	ret.deps = make([]*FileDescriptor, len(fd.GetDependency()))
 	for i := 0; i < d.Imports().Len(); i++ {
 		f := d.Imports().Get(i).FileDescriptor
-		if c, err := toFileDescriptor(f, cache); err != nil {
+		if c, err := wrapFile(f, cache); err != nil {
 			return nil, err
 		} else {
 			ret.deps[i] = c

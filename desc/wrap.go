@@ -2,6 +2,7 @@ package desc
 
 import (
 	"fmt"
+	"google.golang.org/protobuf/reflect/protodesc"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
@@ -17,32 +18,47 @@ type DescriptorWrapper interface {
 }
 
 func WrapDescriptor(d protoreflect.Descriptor) (Descriptor, error) {
+	return wrapDescriptor(d, noopCache{})
+}
+
+func wrapDescriptor(d protoreflect.Descriptor, cache descriptorCache) (Descriptor, error) {
 	switch d := d.(type) {
 	case protoreflect.FileDescriptor:
-		return WrapFile(d)
+		return wrapFile(d, cache)
 	case protoreflect.MessageDescriptor:
-		return WrapMessage(d)
+		return wrapMessage(d, cache)
 	case protoreflect.FieldDescriptor:
-		return WrapField(d)
+		return wrapField(d, cache)
+	case protoreflect.OneofDescriptor:
+		return wrapOneOf(d, cache)
 	case protoreflect.EnumDescriptor:
-		return WrapEnum(d)
+		return wrapEnum(d, cache)
 	case protoreflect.EnumValueDescriptor:
-		return WrapEnumValue(d)
+		return wrapEnumValue(d, cache)
 	case protoreflect.ServiceDescriptor:
-		return WrapService(d)
+		return wrapService(d, cache)
 	case protoreflect.MethodDescriptor:
-		return WrapMethod(d)
+		return wrapMethod(d, cache)
 	default:
 		return nil, fmt.Errorf("unknown descriptor type: %T", d)
 	}
 }
 
 func WrapFile(d protoreflect.FileDescriptor) (*FileDescriptor, error) {
-	return toFileDescriptor(d, noopCache{})
+	return wrapFile(d, noopCache{})
+}
+
+func wrapFile(d protoreflect.FileDescriptor, cache descriptorCache) (*FileDescriptor, error) {
+	fdp := protodesc.ToFileDescriptorProto(d)
+	return convertFile(d, fdp, cache)
 }
 
 func WrapMessage(d protoreflect.MessageDescriptor) (*MessageDescriptor, error) {
-	parent, err := WrapDescriptor(d.Parent())
+	return wrapMessage(d, noopCache{})
+}
+
+func wrapMessage(d protoreflect.MessageDescriptor, cache descriptorCache) (*MessageDescriptor, error) {
+	parent, err := wrapDescriptor(d.Parent(), cache)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +73,11 @@ func WrapMessage(d protoreflect.MessageDescriptor) (*MessageDescriptor, error) {
 }
 
 func WrapField(d protoreflect.FieldDescriptor) (*FieldDescriptor, error) {
-	parent, err := WrapDescriptor(d.Parent())
+	return wrapField(d, noopCache{})
+}
+
+func wrapField(d protoreflect.FieldDescriptor, cache descriptorCache) (*FieldDescriptor, error) {
+	parent, err := wrapDescriptor(d.Parent(), cache)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +95,11 @@ func WrapField(d protoreflect.FieldDescriptor) (*FieldDescriptor, error) {
 }
 
 func WrapOneOf(d protoreflect.OneofDescriptor) (*OneOfDescriptor, error) {
-	parent, err := WrapDescriptor(d.Parent())
+	return wrapOneOf(d, noopCache{})
+}
+
+func wrapOneOf(d protoreflect.OneofDescriptor, cache descriptorCache) (*OneOfDescriptor, error) {
+	parent, err := wrapDescriptor(d.Parent(), cache)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +110,11 @@ func WrapOneOf(d protoreflect.OneofDescriptor) (*OneOfDescriptor, error) {
 }
 
 func WrapEnum(d protoreflect.EnumDescriptor) (*EnumDescriptor, error) {
-	parent, err := WrapDescriptor(d.Parent())
+	return wrapEnum(d, noopCache{})
+}
+
+func wrapEnum(d protoreflect.EnumDescriptor, cache descriptorCache) (*EnumDescriptor, error) {
+	parent, err := wrapDescriptor(d.Parent(), cache)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +129,11 @@ func WrapEnum(d protoreflect.EnumDescriptor) (*EnumDescriptor, error) {
 }
 
 func WrapEnumValue(d protoreflect.EnumValueDescriptor) (*EnumValueDescriptor, error) {
-	parent, err := WrapDescriptor(d.Parent())
+	return wrapEnumValue(d, noopCache{})
+}
+
+func wrapEnumValue(d protoreflect.EnumValueDescriptor, cache descriptorCache) (*EnumValueDescriptor, error) {
+	parent, err := wrapDescriptor(d.Parent(), cache)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +144,11 @@ func WrapEnumValue(d protoreflect.EnumValueDescriptor) (*EnumValueDescriptor, er
 }
 
 func WrapService(d protoreflect.ServiceDescriptor) (*ServiceDescriptor, error) {
-	parent, err := WrapDescriptor(d.Parent())
+	return wrapService(d, noopCache{})
+}
+
+func wrapService(d protoreflect.ServiceDescriptor, cache descriptorCache) (*ServiceDescriptor, error) {
+	parent, err := wrapDescriptor(d.Parent(), cache)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +159,11 @@ func WrapService(d protoreflect.ServiceDescriptor) (*ServiceDescriptor, error) {
 }
 
 func WrapMethod(d protoreflect.MethodDescriptor) (*MethodDescriptor, error) {
-	parent, err := WrapDescriptor(d.Parent())
+	return wrapMethod(d, noopCache{})
+}
+
+func wrapMethod(d protoreflect.MethodDescriptor, cache descriptorCache) (*MethodDescriptor, error) {
+	parent, err := wrapDescriptor(d.Parent(), cache)
 	if err != nil {
 		return nil, err
 	}

@@ -2,13 +2,28 @@ package desc
 
 import (
 	"fmt"
-	"google.golang.org/protobuf/reflect/protodesc"
+	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"reflect"
+	"sync"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/jhump/protoreflect/internal"
+)
+
+// The global cache is used to store descriptors that wrap items in
+// protoregistry.GlobalTypes and protoregistry.GlobalFiles. This prevents
+// repeating work to re-wrap underlying global descriptors.
+var (
+	// We put all wrapped file and message descriptors in this cache.
+	loadedDescriptors = lockingCache{cache: mapCache{}}
+
+	// Unfortunately, we need a different mechanism for enums for
+	// compatibility with old APIs, which required that they were
+	// registered in a different way :(
+	loadedEnumsMu sync.RWMutex
+	loadedEnums = map[reflect.Type]*EnumDescriptor{}
 )
 
 // LoadFileDescriptor creates a file descriptor using the bytes returned by
@@ -19,25 +34,22 @@ func LoadFileDescriptor(file string) (*FileDescriptor, error) {
 	if err != nil {
 		return nil, err
 	}
-	if fd := cache.get(d); fd != nil {
+	if fd := loadedDescriptors.get(d); fd != nil {
 		return fd.(*FileDescriptor), nil
 	}
 
 	var fd *FileDescriptor
-	cache.withLock(func(c descriptorCache) {
-		fd, err = toFileDescriptor(d, c)
+	loadedDescriptors.withLock(func(cache descriptorCache) {
+		// double-check cache, in case it was concurrently added while
+		// we were waiting for the lock
+		f := cache.get(d)
+		if f != nil {
+			fd = f.(*FileDescriptor)
+			return
+		}
+		fd, err = wrapFile(d, cache)
 	})
 	return fd, err
-}
-
-func toFileDescriptor(d protoreflect.FileDescriptor, c descriptorCache) (*FileDescriptor, error) {
-	f := c.get(d)
-	if f != nil {
-		return f.(*FileDescriptor), nil
-	}
-
-	fdp := protodesc.ToFileDescriptorProto(d)
-	return wrapFile(d, fdp, c)
 }
 
 // LoadMessageDescriptor loads descriptor using the encoded descriptor proto returned by
@@ -51,16 +63,23 @@ func LoadMessageDescriptor(message string) (*MessageDescriptor, error) {
 		}
 		return nil, err
 	}
-	md := mt.Descriptor()
-	d := cache.get(md)
+	return loadMessageDescriptor(mt.Descriptor())
+}
+
+func loadMessageDescriptor(md protoreflect.MessageDescriptor) (*MessageDescriptor, error) {
+	d := loadedDescriptors.get(md)
 	if d != nil {
 		return d.(*MessageDescriptor), nil
 	}
 
-	cache.withLock(func(cache descriptorCache) {
+	var err error
+	loadedDescriptors.withLock(func(cache descriptorCache) {
 		d, err = wrapMessage(md, cache)
 	})
-	return d, err
+	if err != nil {
+		return nil, err
+	}
+	return d.(*MessageDescriptor), err
 }
 
 // LoadMessageDescriptorForType loads descriptor using the encoded descriptor proto returned
@@ -90,20 +109,9 @@ func LoadMessageDescriptorForMessage(message proto.Message) (*MessageDescriptor,
 	if m, ok := message.(protoreflect.ProtoMessage); ok {
 		md = m.ProtoReflect().Descriptor()
 	} else {
-
+		md = proto.MessageReflect(message).Descriptor()
 	}
-	name := proto.MessageName(message)
-	if name == "" {
-		return nil, nil
-	}
-	m := getMessageFromCache(name)
-	if m != nil {
-		return m, nil
-	}
-
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-	return loadMessageDescriptorForTypeLocked(name, message.(protoMessage))
+	return loadMessageDescriptor(md)
 }
 
 func messageFromType(mt reflect.Type) (proto.Message, error) {
@@ -115,26 +123,6 @@ func messageFromType(mt reflect.Type) (proto.Message, error) {
 		return nil, fmt.Errorf("failed to create message from type: %v", mt)
 	}
 	return m, nil
-}
-
-func loadMessageDescriptorForTypeLocked(name string, message protoMessage) (*MessageDescriptor, error) {
-	m := messagesCache[name]
-	if m != nil {
-		return m, nil
-	}
-
-	fdb, _ := message.Descriptor()
-	fd, err := internal.DecodeFileDescriptor(name, fdb)
-	if err != nil {
-		return nil, err
-	}
-
-	f, err := toFileDescriptorLocked(fd)
-	if err != nil {
-		return nil, err
-	}
-	putCacheLocked(fd.GetName(), f)
-	return f.FindSymbol(name).(*MessageDescriptor), nil
 }
 
 // interface implemented by all generated enums
@@ -166,9 +154,19 @@ func LoadEnumDescriptorForType(enumType reflect.Type) (*EnumDescriptor, error) {
 		return nil, err
 	}
 
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-	return loadEnumDescriptorForTypeLocked(enumType, enum)
+	return loadEnumDescriptor(enumType, enum)
+}
+
+func getEnumFromCache(t reflect.Type) *EnumDescriptor {
+	loadedEnumsMu.RLock()
+	defer loadedEnumsMu.RUnlock()
+	return loadedEnums[t]
+}
+
+func putEnumInCache(t reflect.Type, d *EnumDescriptor) {
+	loadedEnumsMu.Lock()
+	defer loadedEnumsMu.Unlock()
+	loadedEnums[t] = d
 }
 
 // LoadEnumDescriptorForEnum loads descriptor using the encoded descriptor proto
@@ -185,9 +183,7 @@ func LoadEnumDescriptorForEnum(enum protoEnum) (*EnumDescriptor, error) {
 		return e, nil
 	}
 
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-	return loadEnumDescriptorForTypeLocked(et, enum)
+	return loadEnumDescriptor(et, enum)
 }
 
 func enumFromType(et reflect.Type) (protoEnum, error) {
@@ -204,30 +200,26 @@ func enumFromType(et reflect.Type) (protoEnum, error) {
 	return e, nil
 }
 
-func loadEnumDescriptorForTypeLocked(et reflect.Type, enum protoEnum) (*EnumDescriptor, error) {
-	e := enumCache[et]
-	if e != nil {
-		return e, nil
-	}
-
+func getDescriptorForEnum(enum protoEnum) (*dpb.FileDescriptorProto, []int, error) {
 	fdb, path := enum.EnumDescriptor()
-	name := fmt.Sprintf("%v", et)
+	name := fmt.Sprintf("%T", enum)
 	fd, err := internal.DecodeFileDescriptor(name, fdb)
+	return fd, path, err
+}
+
+func loadEnumDescriptor(et reflect.Type, enum protoEnum) (*EnumDescriptor, error) {
+	fdp, path, err := getDescriptorForEnum(enum)
 	if err != nil {
 		return nil, err
 	}
-	// see if we already have cached "rich" descriptor
-	f, ok := filesCache[fd.GetName()]
-	if !ok {
-		f, err = toFileDescriptorLocked(fd)
-		if err != nil {
-			return nil, err
-		}
-		putCacheLocked(fd.GetName(), f)
+
+	fd, err := LoadFileDescriptor(fdp.GetName())
+	if err != nil {
+		return nil, err
 	}
 
-	ed := findEnum(f, path)
-	enumCache[et] = ed
+	ed := findEnum(fd, path)
+	putEnumInCache(et, ed)
 	return ed, nil
 }
 
