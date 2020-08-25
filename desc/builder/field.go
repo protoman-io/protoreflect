@@ -532,6 +532,10 @@ func (flb *FieldBuilder) buildProto(path []int32, sourceInfo *dpb.SourceCodeInfo
 	if flb.Default != "" {
 		def = proto.String(flb.Default)
 	}
+	var proto3Optional *bool
+	if flb.Proto3Optional {
+		proto3Optional = proto.Bool(true)
+	}
 
 	maxTag := internal.GetMaxTag(isMessageSet)
 	if flb.number > maxTag {
@@ -539,18 +543,16 @@ func (flb *FieldBuilder) buildProto(path []int32, sourceInfo *dpb.SourceCodeInfo
 	}
 
 	fd := &dpb.FieldDescriptorProto{
-		Name:         proto.String(flb.name),
-		Number:       proto.Int32(flb.number),
-		Options:      flb.Options,
-		Label:        lbl,
-		Type:         flb.fieldType.fieldType.Enum(),
-		TypeName:     typeName,
-		JsonName:     proto.String(jsName),
-		DefaultValue: def,
-		Extendee:     extendee,
-	}
-	if flb.Proto3Optional {
-		internal.SetProto3Optional(fd)
+		Name:           proto.String(flb.name),
+		Number:         proto.Int32(flb.number),
+		Options:        flb.Options,
+		Label:          lbl,
+		Type:           flb.fieldType.fieldType.Enum(),
+		TypeName:       typeName,
+		JsonName:       proto.String(jsName),
+		DefaultValue:   def,
+		Extendee:       extendee,
+		Proto3Optional: proto3Optional,
 	}
 	return fd, nil
 }

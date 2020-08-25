@@ -2,149 +2,82 @@ package desc
 
 import (
 	"fmt"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	"reflect"
-	"sync"
 
 	"github.com/golang/protobuf/proto"
-	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
-
 	"github.com/jhump/protoreflect/internal"
-)
-
-var (
-	cacheMu       sync.RWMutex
-	filesCache    = map[string]*FileDescriptor{}
-	messagesCache = map[string]*MessageDescriptor{}
-	enumCache     = map[reflect.Type]*EnumDescriptor{}
 )
 
 // LoadFileDescriptor creates a file descriptor using the bytes returned by
 // proto.FileDescriptor. Descriptors are cached so that they do not need to be
 // re-processed if the same file is fetched again later.
 func LoadFileDescriptor(file string) (*FileDescriptor, error) {
-	return loadFileDescriptor(file, nil)
-}
-
-func loadFileDescriptor(file string, r *ImportResolver) (*FileDescriptor, error) {
-	f := getFileFromCache(file)
-	if f != nil {
-		return f, nil
-	}
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-	return loadFileDescriptorLocked(file, r)
-}
-
-func loadFileDescriptorLocked(file string, r *ImportResolver) (*FileDescriptor, error) {
-	f := filesCache[file]
-	if f != nil {
-		return f, nil
-	}
-	fd, err := internal.LoadFileDescriptor(file)
+	d, err := protoregistry.GlobalFiles.FindFileByPath(file)
 	if err != nil {
 		return nil, err
 	}
-
-	f, err = toFileDescriptorLocked(fd, r)
-	if err != nil {
-		return nil, err
+	if fd := cache.get(d); fd != nil {
+		return fd.(*FileDescriptor), nil
 	}
-	putCacheLocked(file, f)
-	return f, nil
+
+	var fd *FileDescriptor
+	cache.withLock(func(c descriptorCache) {
+		fd, err = toFileDescriptor(d, c)
+	})
+	return fd, err
 }
 
-func toFileDescriptorLocked(fd *dpb.FileDescriptorProto, r *ImportResolver) (*FileDescriptor, error) {
-	deps := make([]*FileDescriptor, len(fd.GetDependency()))
-	for i, dep := range fd.GetDependency() {
-		resolvedDep := r.ResolveImport(fd.GetName(), dep)
-		var err error
-		deps[i], err = loadFileDescriptorLocked(resolvedDep, r)
-		if _, ok := err.(internal.ErrNoSuchFile); ok && resolvedDep != dep {
-			// try original path
-			deps[i], err = loadFileDescriptorLocked(dep, r)
-		}
-		if err != nil {
-			return nil, err
-		}
+func toFileDescriptor(d protoreflect.FileDescriptor, c descriptorCache) (*FileDescriptor, error) {
+	f := c.get(d)
+	if f != nil {
+		return f.(*FileDescriptor), nil
 	}
-	return CreateFileDescriptor(fd, deps...)
-}
 
-func getFileFromCache(file string) *FileDescriptor {
-	cacheMu.RLock()
-	defer cacheMu.RUnlock()
-	return filesCache[file]
-}
-
-func putCacheLocked(filename string, fd *FileDescriptor) {
-	filesCache[filename] = fd
-	putMessageCacheLocked(fd.messages)
-}
-
-func putMessageCacheLocked(mds []*MessageDescriptor) {
-	for _, md := range mds {
-		messagesCache[md.fqn] = md
-		putMessageCacheLocked(md.nested)
-	}
-}
-
-// interface implemented by generated messages, which all have a Descriptor() method in
-// addition to the methods of proto.Message
-type protoMessage interface {
-	proto.Message
-	Descriptor() ([]byte, []int)
+	fdp := protodesc.ToFileDescriptorProto(d)
+	return wrapFile(d, fdp, c)
 }
 
 // LoadMessageDescriptor loads descriptor using the encoded descriptor proto returned by
 // Message.Descriptor() for the given message type. If the given type is not recognized,
 // then a nil descriptor is returned.
 func LoadMessageDescriptor(message string) (*MessageDescriptor, error) {
-	return loadMessageDescriptor(message, nil)
-}
-
-func loadMessageDescriptor(message string, r *ImportResolver) (*MessageDescriptor, error) {
-	m := getMessageFromCache(message)
-	if m != nil {
-		return m, nil
-	}
-
-	pt := proto.MessageType(message)
-	if pt == nil {
-		return nil, nil
-	}
-	msg, err := messageFromType(pt)
+	mt, err := protoregistry.GlobalTypes.FindMessageByName(protoreflect.FullName(message))
 	if err != nil {
+		if err == protoregistry.NotFound {
+			return nil, nil
+		}
 		return nil, err
 	}
+	md := mt.Descriptor()
+	d := cache.get(md)
+	if d != nil {
+		return d.(*MessageDescriptor), nil
+	}
 
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-	return loadMessageDescriptorForTypeLocked(message, msg, r)
+	cache.withLock(func(cache descriptorCache) {
+		d, err = wrapMessage(md, cache)
+	})
+	return d, err
 }
 
 // LoadMessageDescriptorForType loads descriptor using the encoded descriptor proto returned
 // by message.Descriptor() for the given message type. If the given type is not recognized,
 // then a nil descriptor is returned.
 func LoadMessageDescriptorForType(messageType reflect.Type) (*MessageDescriptor, error) {
-	return loadMessageDescriptorForType(messageType, nil)
-}
-
-func loadMessageDescriptorForType(messageType reflect.Type, r *ImportResolver) (*MessageDescriptor, error) {
 	m, err := messageFromType(messageType)
 	if err != nil {
 		return nil, err
 	}
-	return loadMessageDescriptorForMessage(m, r)
+	return LoadMessageDescriptorForMessage(m)
 }
 
 // LoadMessageDescriptorForMessage loads descriptor using the encoded descriptor proto
 // returned by message.Descriptor(). If the given type is not recognized, then a nil
 // descriptor is returned.
 func LoadMessageDescriptorForMessage(message proto.Message) (*MessageDescriptor, error) {
-	return loadMessageDescriptorForMessage(message, nil)
-}
-
-func loadMessageDescriptorForMessage(message proto.Message, r *ImportResolver) (*MessageDescriptor, error) {
 	// efficiently handle dynamic messages
 	type descriptorable interface {
 		GetMessageDescriptor() *MessageDescriptor
@@ -153,6 +86,12 @@ func loadMessageDescriptorForMessage(message proto.Message, r *ImportResolver) (
 		return d.GetMessageDescriptor(), nil
 	}
 
+	var md protoreflect.MessageDescriptor
+	if m, ok := message.(protoreflect.ProtoMessage); ok {
+		md = m.ProtoReflect().Descriptor()
+	} else {
+
+	}
 	name := proto.MessageName(message)
 	if name == "" {
 		return nil, nil
@@ -164,21 +103,21 @@ func loadMessageDescriptorForMessage(message proto.Message, r *ImportResolver) (
 
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
-	return loadMessageDescriptorForTypeLocked(name, message.(protoMessage), nil)
+	return loadMessageDescriptorForTypeLocked(name, message.(protoMessage))
 }
 
-func messageFromType(mt reflect.Type) (protoMessage, error) {
+func messageFromType(mt reflect.Type) (proto.Message, error) {
 	if mt.Kind() != reflect.Ptr {
 		mt = reflect.PtrTo(mt)
 	}
-	m, ok := reflect.Zero(mt).Interface().(protoMessage)
+	m, ok := reflect.Zero(mt).Interface().(proto.Message)
 	if !ok {
 		return nil, fmt.Errorf("failed to create message from type: %v", mt)
 	}
 	return m, nil
 }
 
-func loadMessageDescriptorForTypeLocked(name string, message protoMessage, r *ImportResolver) (*MessageDescriptor, error) {
+func loadMessageDescriptorForTypeLocked(name string, message protoMessage) (*MessageDescriptor, error) {
 	m := messagesCache[name]
 	if m != nil {
 		return m, nil
@@ -190,18 +129,12 @@ func loadMessageDescriptorForTypeLocked(name string, message protoMessage, r *Im
 		return nil, err
 	}
 
-	f, err := toFileDescriptorLocked(fd, r)
+	f, err := toFileDescriptorLocked(fd)
 	if err != nil {
 		return nil, err
 	}
 	putCacheLocked(fd.GetName(), f)
 	return f.FindSymbol(name).(*MessageDescriptor), nil
-}
-
-func getMessageFromCache(message string) *MessageDescriptor {
-	cacheMu.RLock()
-	defer cacheMu.RUnlock()
-	return messagesCache[message]
 }
 
 // interface implemented by all generated enums
@@ -220,10 +153,6 @@ type protoEnum interface {
 // LoadEnumDescriptorForType loads descriptor using the encoded descriptor proto returned
 // by enum.EnumDescriptor() for the given enum type.
 func LoadEnumDescriptorForType(enumType reflect.Type) (*EnumDescriptor, error) {
-	return loadEnumDescriptorForType(enumType, nil)
-}
-
-func loadEnumDescriptorForType(enumType reflect.Type, r *ImportResolver) (*EnumDescriptor, error) {
 	// we cache descriptors using non-pointer type
 	if enumType.Kind() == reflect.Ptr {
 		enumType = enumType.Elem()
@@ -239,16 +168,12 @@ func loadEnumDescriptorForType(enumType reflect.Type, r *ImportResolver) (*EnumD
 
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
-	return loadEnumDescriptorForTypeLocked(enumType, enum, r)
+	return loadEnumDescriptorForTypeLocked(enumType, enum)
 }
 
 // LoadEnumDescriptorForEnum loads descriptor using the encoded descriptor proto
 // returned by enum.EnumDescriptor().
 func LoadEnumDescriptorForEnum(enum protoEnum) (*EnumDescriptor, error) {
-	return loadEnumDescriptorForEnum(enum, nil)
-}
-
-func loadEnumDescriptorForEnum(enum protoEnum, r *ImportResolver) (*EnumDescriptor, error) {
 	et := reflect.TypeOf(enum)
 	// we cache descriptors using non-pointer type
 	if et.Kind() == reflect.Ptr {
@@ -262,21 +187,24 @@ func loadEnumDescriptorForEnum(enum protoEnum, r *ImportResolver) (*EnumDescript
 
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
-	return loadEnumDescriptorForTypeLocked(et, enum, r)
+	return loadEnumDescriptorForTypeLocked(et, enum)
 }
 
 func enumFromType(et reflect.Type) (protoEnum, error) {
-	if et.Kind() != reflect.Int32 {
-		et = reflect.PtrTo(et)
-	}
 	e, ok := reflect.Zero(et).Interface().(protoEnum)
+	if !ok {
+		if et.Kind() != reflect.Ptr {
+			et = et.Elem()
+		}
+		e, ok = reflect.Zero(et).Interface().(protoEnum)
+	}
 	if !ok {
 		return nil, fmt.Errorf("failed to create enum from type: %v", et)
 	}
 	return e, nil
 }
 
-func loadEnumDescriptorForTypeLocked(et reflect.Type, enum protoEnum, r *ImportResolver) (*EnumDescriptor, error) {
+func loadEnumDescriptorForTypeLocked(et reflect.Type, enum protoEnum) (*EnumDescriptor, error) {
 	e := enumCache[et]
 	if e != nil {
 		return e, nil
@@ -291,7 +219,7 @@ func loadEnumDescriptorForTypeLocked(et reflect.Type, enum protoEnum, r *ImportR
 	// see if we already have cached "rich" descriptor
 	f, ok := filesCache[fd.GetName()]
 	if !ok {
-		f, err = toFileDescriptorLocked(fd, r)
+		f, err = toFileDescriptorLocked(fd)
 		if err != nil {
 			return nil, err
 		}
@@ -301,12 +229,6 @@ func loadEnumDescriptorForTypeLocked(et reflect.Type, enum protoEnum, r *ImportR
 	ed := findEnum(f, path)
 	enumCache[et] = ed
 	return ed, nil
-}
-
-func getEnumFromCache(et reflect.Type) *EnumDescriptor {
-	cacheMu.RLock()
-	defer cacheMu.RUnlock()
-	return enumCache[et]
 }
 
 func findEnum(fd *FileDescriptor, path []int) *EnumDescriptor {
@@ -323,11 +245,7 @@ func findEnum(fd *FileDescriptor, path []int) *EnumDescriptor {
 // LoadFieldDescriptorForExtension loads the field descriptor that corresponds to the given
 // extension description.
 func LoadFieldDescriptorForExtension(ext *proto.ExtensionDesc) (*FieldDescriptor, error) {
-	return loadFieldDescriptorForExtension(ext, nil)
-}
-
-func loadFieldDescriptorForExtension(ext *proto.ExtensionDesc, r *ImportResolver) (*FieldDescriptor, error) {
-	file, err := loadFileDescriptor(ext.Filename, r)
+	file, err := LoadFileDescriptor(ext.Filename)
 	if err != nil {
 		return nil, err
 	}
