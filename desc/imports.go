@@ -2,6 +2,7 @@ package desc
 
 import (
 	"fmt"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -40,6 +41,10 @@ var (
 func RegisterImportPath(registerPath, importPath string) {
 	if len(importPath) == 0 {
 		panic("import path cannot be empty")
+	}
+	_, err := protoregistry.GlobalFiles.FindFileByPath(registerPath)
+	if err != nil {
+		panic(fmt.Sprintf("path %q is not a registered proto file", registerPath))
 	}
 	globalImportPathMu.Lock()
 	defer globalImportPathMu.Unlock()
