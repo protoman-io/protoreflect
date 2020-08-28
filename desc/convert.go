@@ -71,27 +71,15 @@ func createFileDescriptor(fd *dpb.FileDescriptorProto, deps []*FileDescriptor, r
 
 	// make sure cache has dependencies populated
 	cache := mapCache{}
-	if err := cacheDeps(deps, dr, cache); err != nil {
-		return nil, err
+	for _, dep := range deps {
+		fd, err := dr.FindFileByPath(dep.GetName())
+		if err != nil {
+			return nil, err
+		}
+		cache.put(fd, dep)
 	}
 
 	return convertFile(d, fd, cache)
-}
-
-func cacheDeps(deps []*FileDescriptor, resolver protodesc.Resolver, cache descriptorCache) error {
-	for _, dep := range deps {
-		fd, err := resolver.FindFileByPath(dep.GetName())
-		if err != nil {
-			return err
-		}
-		if cache.get(fd) == nil {
-			cache.put(fd, dep)
-		}
-		if err := cacheDeps(dep.GetDependencies(), resolver, cache); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func convertFile(d protoreflect.FileDescriptor, fd *dpb.FileDescriptorProto, cache descriptorCache) (*FileDescriptor, error) {

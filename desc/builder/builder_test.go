@@ -503,9 +503,13 @@ func roundTripFile(t *testing.T, fd *desc.FileDescriptor) {
 	//     statements in the source file.
 	//  2. The builder imports the actual source of all elements and never
 	//     uses public imports. The original file, on the other hand, could
-	//     used public imports and "indirectly" import other files that way.
+	//     use public imports and "indirectly" import other files that way.
 	//  3. The builder never emits weak imports.
-	//  4. The builder tries to preserve SourceCodeInfo, but will not preserve
+	//  4. The builder behaves like protoc in that it emits nil as the file
+	//     package if none is set. However the new protobuf runtime, when
+	//     reconstructing the proto from a protoreflect.FileDescriptor, will
+	//     instead emit a pointer to empty string :(
+	//  5. The builder tries to preserve SourceCodeInfo, but will not preserve
 	//     position information. So that info does not survive round-tripping
 	//     (though comments do: there is a separate test for that). Also, the
 	//     round-tripped version will have source code info (even though it
@@ -539,6 +543,12 @@ func roundTripFile(t *testing.T, fd *desc.FileDescriptor) {
 	// files to handle any actual public import encountered.)
 	fdp.PublicDependency = nil
 	fdp.WeakDependency = nil
+
+	// Fix the one we loaded so it uses nil as the package instead of an
+	// empty string, since that is what builders produce.
+	if fdp.GetPackage() == "" {
+		fdp.Package = nil
+	}
 
 	// Remove source code info that the builder generated since the original
 	// has none.
@@ -924,6 +934,7 @@ func TestCustomOptionsDiscoveredInSameFile(t *testing.T) {
 
 	t.Run("oneof options", func(t *testing.T) {
 		oob := NewOneOf("oo")
+		oob.AddChoice(NewField("foo", FieldTypeString()))
 		oob.Options = &dpb.OneofOptions{}
 		// oneofs must be connected to a message
 		mb := NewMessage("Foo").AddOneOf(oob)
@@ -952,6 +963,7 @@ func TestCustomOptionsDiscoveredInSameFile(t *testing.T) {
 
 	t.Run("enum options", func(t *testing.T) {
 		eb := NewEnum("Foo")
+		eb.AddValue(NewEnumValue("FOO"))
 		eb.Options = &dpb.EnumOptions{}
 		ext, err := enumOpt.Build()
 		testutil.Ok(t, err)
@@ -1108,6 +1120,7 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 
 			t.Run("oneof options", func(t *testing.T) {
 				oob := NewOneOf("oo")
+				oob.AddChoice(NewField("foo", FieldTypeString()))
 				oob.Options = &dpb.OneofOptions{}
 				// oneofs must be connected to a message
 				mb := NewMessage("Foo").AddOneOf(oob)
@@ -1136,6 +1149,7 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 
 			t.Run("enum options", func(t *testing.T) {
 				eb := NewEnum("Foo")
+				eb.AddValue(NewEnumValue("FOO"))
 				eb.Options = &dpb.EnumOptions{}
 				ext, err := enumOpt.Build()
 				testutil.Ok(t, err)
@@ -1287,6 +1301,7 @@ func TestUseOfExtensionRegistry(t *testing.T) {
 
 	t.Run("oneof options", func(t *testing.T) {
 		oob := NewOneOf("oo")
+		oob.AddChoice(NewField("foo", FieldTypeString()))
 		oob.Options = &dpb.OneofOptions{}
 		// oneofs must be connected to a message
 		NewMessage("Foo").AddOneOf(oob)
@@ -1305,6 +1320,7 @@ func TestUseOfExtensionRegistry(t *testing.T) {
 
 	t.Run("enum options", func(t *testing.T) {
 		eb := NewEnum("Foo")
+		eb.AddValue(NewEnumValue("FOO"))
 		eb.Options = &dpb.EnumOptions{}
 		err = dynamic.SetExtension(eb.Options, enumOpt, "fubar")
 		testutil.Ok(t, err)
