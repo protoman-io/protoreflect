@@ -94,7 +94,7 @@ func (fd *FileDescriptor) GetName() string {
 // GetFullyQualifiedName returns the name of the file, same as GetName. It is
 // present to satisfy the Descriptor interface.
 func (fd *FileDescriptor) GetFullyQualifiedName() string {
-	return string(fd.wrapped.FullName())
+	return fd.wrapped.Path()
 }
 
 // GetPackage returns the name of the package declared in the file.
@@ -549,6 +549,14 @@ type FieldDescriptor struct {
 	enumType       *EnumDescriptor
 	sourceInfoPath []int32
 	def            memoizedDefault
+}
+
+func (fd *FieldDescriptor) Unwrap() protoreflect.Descriptor {
+	return fd.wrapped
+}
+
+func (fd *FieldDescriptor) UnwrapField() protoreflect.FieldDescriptor {
+	return fd.wrapped
 }
 
 func createFieldDescriptor(fd *FileDescriptor, parent Descriptor, fld protoreflect.FieldDescriptor, fldp *dpb.FieldDescriptorProto, cache descriptorCache, path []int32) *FieldDescriptor {
@@ -1101,6 +1109,14 @@ type EnumDescriptor struct {
 	sourceInfoPath []int32
 }
 
+func (ed *EnumDescriptor) Unwrap() protoreflect.Descriptor {
+	return ed.wrapped
+}
+
+func (ed *EnumDescriptor) UnwrapEnum() protoreflect.EnumDescriptor {
+	return ed.wrapped
+}
+
 func createEnumDescriptor(fd *FileDescriptor, parent Descriptor, ed protoreflect.EnumDescriptor, edp *dpb.EnumDescriptorProto, symbols map[string]Descriptor, cache descriptorCache, path []int32) *EnumDescriptor {
 	ret := &EnumDescriptor{
 		wrapped:        ed,
@@ -1115,6 +1131,11 @@ func createEnumDescriptor(fd *FileDescriptor, parent Descriptor, ed protoreflect
 		srcProto := edp.GetValue()[src.Index()]
 		evd := createEnumValueDescriptor(fd, ret, src, srcProto, append(path, int32(i)))
 		symbols[string(src.FullName())] = evd
+		// NB: for backwards compatibility, also register the enum value as if
+		// scoped within the enum (counter-intuitively, enum value full names are
+		// scoped in the enum's parent element). EnumValueDescripto.GetFullyQualifiedName
+		// returns that alternate full name.
+		symbols[evd.GetFullyQualifiedName()] = evd
 		ret.values = append(ret.values, evd)
 	}
 	if len(ret.values) > 0 {
@@ -1240,6 +1261,14 @@ type EnumValueDescriptor struct {
 	sourceInfoPath []int32
 }
 
+func (vd *EnumValueDescriptor) Unwrap() protoreflect.Descriptor {
+	return vd.wrapped
+}
+
+func (vd *EnumValueDescriptor) UnwrapEnumValue() protoreflect.EnumValueDescriptor {
+	return vd.wrapped
+}
+
 func createEnumValueDescriptor(fd *FileDescriptor, parent *EnumDescriptor, evd protoreflect.EnumValueDescriptor, evdp *dpb.EnumValueDescriptorProto, path []int32) *EnumValueDescriptor {
 	return &EnumValueDescriptor{
 		wrapped:        evd,
@@ -1267,7 +1296,13 @@ func (vd *EnumValueDescriptor) GetNumber() int32 {
 // GetFullyQualifiedName returns the fully qualified name of the enum value.
 // Unlike GetName, this includes fully qualified name of the enclosing enum.
 func (vd *EnumValueDescriptor) GetFullyQualifiedName() string {
-	return string(vd.wrapped.FullName())
+	// NB: Technically, we do not return the correct value. Enum values are
+	// scoped within the enclosing element, not within the enum itself (which
+	// is very non-intuitive, but it follows C++ scoping rules). The value
+	// returned from vd.wrapped.FullName() is correct. However, we return
+	// something different, just for backwards compatibility, as this package
+	// has always instead returned the name scoped inside the enum.
+	return fmt.Sprintf("%s.%s", vd.parent.GetFullyQualifiedName(), vd.wrapped.Name())
 }
 
 // GetParent returns the descriptor for the enum in which this enum value is
@@ -1333,6 +1368,14 @@ type ServiceDescriptor struct {
 	file           *FileDescriptor
 	methods        []*MethodDescriptor
 	sourceInfoPath []int32
+}
+
+func (sd *ServiceDescriptor) Unwrap() protoreflect.Descriptor {
+	return sd.wrapped
+}
+
+func (sd *ServiceDescriptor) UnwrapService() protoreflect.ServiceDescriptor {
+	return sd.wrapped
 }
 
 func createServiceDescriptor(fd *FileDescriptor, sd protoreflect.ServiceDescriptor, sdp *dpb.ServiceDescriptorProto, symbols map[string]Descriptor, path []int32) *ServiceDescriptor {
@@ -1448,6 +1491,14 @@ type MethodDescriptor struct {
 	inType         *MessageDescriptor
 	outType        *MessageDescriptor
 	sourceInfoPath []int32
+}
+
+func (md *MethodDescriptor) Unwrap() protoreflect.Descriptor {
+	return md.wrapped
+}
+
+func (md *MethodDescriptor) UnwrapMethod() protoreflect.MethodDescriptor {
+	return md.wrapped
 }
 
 func createMethodDescriptor(fd *FileDescriptor, parent *ServiceDescriptor, md protoreflect.MethodDescriptor, mdp *dpb.MethodDescriptorProto, path []int32) *MethodDescriptor {
@@ -1570,6 +1621,14 @@ type OneOfDescriptor struct {
 	file           *FileDescriptor
 	choices        []*FieldDescriptor
 	sourceInfoPath []int32
+}
+
+func (od *OneOfDescriptor) Unwrap() protoreflect.Descriptor {
+	return od.wrapped
+}
+
+func (od *OneOfDescriptor) UnwrapOneOf() protoreflect.OneofDescriptor {
+	return od.wrapped
 }
 
 func createOneOfDescriptor(fd *FileDescriptor, parent *MessageDescriptor, index int, od protoreflect.OneofDescriptor, odp *dpb.OneofDescriptorProto, path []int32) *OneOfDescriptor {

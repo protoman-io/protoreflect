@@ -1018,8 +1018,7 @@ func TestLoadFileDescriptorForWellKnownProtos(t *testing.T) {
 			continue
 		}
 		fd, err = LoadFileDescriptor(file)
-		testutil.Ok(t, err)
-		testutil.Eq(t, file, fd.GetName())
+		testutil.Ok(t, err, "failed to load %q", file)
 		for _, typ := range types {
 			d := fd.FindSymbol(typ)
 			testutil.Require(t, d != nil, "file %q does not have type %s", file, typ)

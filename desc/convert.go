@@ -69,30 +69,30 @@ func createFileDescriptor(fd *dpb.FileDescriptorProto, deps []*FileDescriptor, r
 		return nil, err
 	}
 
-	//// make sure cache has dependencies populated
-	//cache := mapCache{}
-	//if err := cacheDeps(deps, dr, cache); err != nil {
-	//	return nil, err
-	//}
+	// make sure cache has dependencies populated
+	cache := mapCache{}
+	if err := cacheDeps(deps, dr, cache); err != nil {
+		return nil, err
+	}
 
-	return convertFile(d, fd, noopCache{})
+	return convertFile(d, fd, cache)
 }
 
-//func cacheDeps(deps []*FileDescriptor, resolver protodesc.Resolver, cache descriptorCache) error {
-//	for _, dep := range deps {
-//		fd, err := resolver.FindFileByPath(dep.GetName())
-//		if err != nil {
-//			return err
-//		}
-//		if cache.get(fd) == nil {
-//			cache.put(fd, dep)
-//		}
-//		if err := cacheDeps(dep.GetDependencies(), resolver, cache); err != nil {
-//			return err
-//		}
-//	}
-//	return nil
-//}
+func cacheDeps(deps []*FileDescriptor, resolver protodesc.Resolver, cache descriptorCache) error {
+	for _, dep := range deps {
+		fd, err := resolver.FindFileByPath(dep.GetName())
+		if err != nil {
+			return err
+		}
+		if cache.get(fd) == nil {
+			cache.put(fd, dep)
+		}
+		if err := cacheDeps(dep.GetDependencies(), resolver, cache); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func convertFile(d protoreflect.FileDescriptor, fd *dpb.FileDescriptorProto, cache descriptorCache) (*FileDescriptor, error) {
 	ret := &FileDescriptor{
@@ -107,7 +107,9 @@ func convertFile(d protoreflect.FileDescriptor, fd *dpb.FileDescriptorProto, cac
 	ret.deps = make([]*FileDescriptor, len(fd.GetDependency()))
 	for i := 0; i < d.Imports().Len(); i++ {
 		f := d.Imports().Get(i).FileDescriptor
-		if c, err := wrapFile(f, cache); err != nil {
+		if c := cache.get(f); c != nil {
+			ret.deps[i] = c.(*FileDescriptor)
+		} else if c, err := wrapFile(f, cache); err != nil {
 			return nil, err
 		} else {
 			ret.deps[i] = c

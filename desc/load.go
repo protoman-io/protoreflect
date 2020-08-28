@@ -31,7 +31,18 @@ var (
 // re-processed if the same file is fetched again later.
 func LoadFileDescriptor(file string) (*FileDescriptor, error) {
 	d, err := protoregistry.GlobalFiles.FindFileByPath(file)
+	if err == protoregistry.NotFound {
+		// for backwards compatibility, see if this matches a known old
+		// alias for the file (older versions of libraries that registered
+		// the files using incorrect/non-canonical paths)
+		if alt := internal.StdFileAliases[file]; alt != "" {
+			d, err = protoregistry.GlobalFiles.FindFileByPath(alt)
+		}
+	}
 	if err != nil {
+		if err != protoregistry.NotFound {
+			return nil, internal.ErrNoSuchFile(file)
+		}
 		return nil, err
 	}
 	if fd := loadedDescriptors.get(d); fd != nil {
