@@ -65,7 +65,14 @@ func checkFiles(t *testing.T, act, exp *desc.FileDescriptor, checked map[string]
 	}
 	checked[act.GetName()] = struct{}{}
 
-	testutil.Require(t, proto.Equal(exp.AsFileDescriptorProto(), act.AsProto()), "linked descriptor did not match output from protoc:\nwanted: %s\ngot: %s", toString(exp.AsProto()), toString(act.AsProto()))
+	// NB: protoc emits missing package	as absent/nil, but when converting a
+	// protoreflect.FileDescriptor to proto using the protodesc package, it
+	// instead emits a present-but-empty package name.
+	expProto := exp.AsFileDescriptorProto()
+	if expProto.GetPackage() == "" {
+		expProto.Package = nil
+	}
+	testutil.Require(t, proto.Equal(expProto, act.AsProto()), "linked descriptor did not match version loaded from protoregistry.GlobalFiles:\nwanted: %s\ngot: %s", toString(exp.AsProto()), toString(act.AsProto()))
 
 	for i, dep := range act.GetDependencies() {
 		checkFiles(t, dep, exp.GetDependencies()[i], checked)

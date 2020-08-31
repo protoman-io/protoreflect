@@ -305,7 +305,8 @@ func (p Parser) ParseFilesButDoNotLink(filenames ...string) ([]*dpb.FileDescript
 			pr.errs.errReporter = func(err ErrorWithPos) error {
 				return err
 			}
-			_ = interpretFileOptions(pr, poorFileDescriptorish{FileDescriptorProto: fd})
+			var emptyLinker linker
+			_ = emptyLinker.interpretFileOptions(pr, fd)
 		}
 		if p.IncludeSourceCodeInfo {
 			fd.SourceCodeInfo = pr.generateSourceCodeInfo()

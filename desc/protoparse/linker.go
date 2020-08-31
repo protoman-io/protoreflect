@@ -54,16 +54,15 @@ func (l *linker) linkFiles() (map[string]*desc.FileDescriptor, error) {
 	// checking of symbols. But, without breaking encapsulation (e.g. exporting
 	// a lot of fields from desc package that are currently unexported) or
 	// merging this into the same package, we can't really prevent it.
-	linked, err := l.createdLinkedDescriptors()
-	if err != nil {
-		return nil, err
-	}
+	//linked, err := l.createdLinkedDescriptors()
+	//if err != nil {
+	//	return nil, err
+	//}
 
-	// Now that we have linked descriptors, we can interpret any uninterpreted
+ 	// Now that we have linked descriptors, we can interpret any uninterpreted
 	// options that remain.
 	for _, r := range l.files {
-		fd := linked[r.fd.GetName()]
-		if err := interpretFileOptions(r, richFileDescriptorish{FileDescriptor: fd}); err != nil {
+		if err := l.interpretFileOptions(r); err != nil {
 			return nil, err
 		}
 		// we should now have any message_set_wire_format options parsed
