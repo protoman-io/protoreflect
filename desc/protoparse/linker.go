@@ -7,7 +7,8 @@ import (
 	"strings"
 
 	"github.com/golang/protobuf/proto"
-	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/descriptorpb"
 
 	"github.com/jhump/protoreflect/desc"
 	"github.com/jhump/protoreflect/desc/internal"
@@ -17,20 +18,28 @@ type linker struct {
 	files          map[string]*parseResult
 	filenames      []string
 	errs           *errorHandler
-	descriptorPool map[*dpb.FileDescriptorProto]map[string]proto.Message
+	descriptorPool map[*descriptorpb.FileDescriptorProto]map[string]proto.Message
 	extensions     map[string]map[int32]string
+	descriptors    map[proto.Message]protoreflect.Descriptor
 }
 
 func newLinker(files *parseResults, errs *errorHandler) *linker {
-	return &linker{files: files.resultsByFilename, filenames: files.filenames, errs: errs}
+	return &linker{
+		files:          files.resultsByFilename,
+		filenames:      files.filenames,
+		errs:           errs,
+		descriptorPool: map[*descriptorpb.FileDescriptorProto]map[string]proto.Message{},
+		extensions:     map[string]map[int32]string{},
+		descriptors:    map[proto.Message]protoreflect.Descriptor{},
+	}
 }
 
-func (l *linker) linkFiles() (map[string]*desc.FileDescriptor, error) {
+func (l *linker) linkFiles() error {
 	// First, we put all symbols into a single pool, which lets us ensure there
 	// are no duplicate symbols and will also let us resolve and revise all type
 	// references in next step.
 	if err := l.createDescriptorPool(); err != nil {
-		return nil, err
+		return err
 	}
 
 	// After we've populated the pool, we can now try to resolve all type
@@ -40,35 +49,25 @@ func (l *linker) linkFiles() (map[string]*desc.FileDescriptor, error) {
 	// link time), and references will be re-written to be fully-qualified
 	// references (e.g. start with a dot ".").
 	if err := l.resolveReferences(); err != nil {
-		return nil, err
+		return err
 	}
 
 	if err := l.errs.getError(); err != nil {
 		// we won't be able to create real descriptors if we've encountered
 		// errors up to this point, so bail at this point
-		return nil, err
+		return err
 	}
-
-	// Now we've validated the descriptors, so we can link them into rich
-	// descriptors. This is a little redundant since that step does similar
-	// checking of symbols. But, without breaking encapsulation (e.g. exporting
-	// a lot of fields from desc package that are currently unexported) or
-	// merging this into the same package, we can't really prevent it.
-	//linked, err := l.createdLinkedDescriptors()
-	//if err != nil {
-	//	return nil, err
-	//}
 
  	// Now that we have linked descriptors, we can interpret any uninterpreted
 	// options that remain.
 	for _, r := range l.files {
 		if err := l.interpretFileOptions(r); err != nil {
-			return nil, err
+			return err
 		}
-		// we should now have any message_set_wire_format options parsed
-		// and can do further validation on tag ranges
-		if err := checkExtensionTagsInFile(fd, r); err != nil {
-			return nil, err
+		// we should now have any message_set_wire_format options
+		// parsed and can do further validation
+		if err := l.checkMessageSets(r); err != nil {
+			return err
 		}
 	}
 
@@ -76,13 +75,12 @@ func (l *linker) linkFiles() (map[string]*desc.FileDescriptor, error) {
 	// will return all errors it should process. If the ErrorReporter handles all errors itself
 	// and always returns nil, we should get ErrInvalidSource here, and need to propagate this
 	if err := l.errs.getError(); err != nil {
-		return nil, err
+		return err
 	}
-	return linked, nil
+	return nil
 }
 
 func (l *linker) createDescriptorPool() error {
-	l.descriptorPool = map[*dpb.FileDescriptorProto]map[string]proto.Message{}
 	for _, filename := range l.filenames {
 		r := l.files[filename]
 		fd := r.fd
@@ -151,7 +149,7 @@ func (l *linker) createDescriptorPool() error {
 	return nil
 }
 
-func addMessageToPool(r *parseResult, pool map[string]proto.Message, errs *errorHandler, prefix string, md *dpb.DescriptorProto) error {
+func addMessageToPool(r *parseResult, pool map[string]proto.Message, errs *errorHandler, prefix string, md *descriptorpb.DescriptorProto) error {
 	fqn := prefix + md.GetName()
 	if err := addToPool(r, pool, errs, fqn, md); err != nil {
 		return err
@@ -180,12 +178,12 @@ func addMessageToPool(r *parseResult, pool map[string]proto.Message, errs *error
 	return nil
 }
 
-func addFieldToPool(r *parseResult, pool map[string]proto.Message, errs *errorHandler, prefix string, fld *dpb.FieldDescriptorProto) error {
+func addFieldToPool(r *parseResult, pool map[string]proto.Message, errs *errorHandler, prefix string, fld *descriptorpb.FieldDescriptorProto) error {
 	fqn := prefix + fld.GetName()
 	return addToPool(r, pool, errs, fqn, fld)
 }
 
-func addEnumToPool(r *parseResult, pool map[string]proto.Message, errs *errorHandler, prefix string, ed *dpb.EnumDescriptorProto) error {
+func addEnumToPool(r *parseResult, pool map[string]proto.Message, errs *errorHandler, prefix string, ed *descriptorpb.EnumDescriptorProto) error {
 	fqn := prefix + ed.GetName()
 	if err := addToPool(r, pool, errs, fqn, ed); err != nil {
 		return err
@@ -199,7 +197,7 @@ func addEnumToPool(r *parseResult, pool map[string]proto.Message, errs *errorHan
 	return nil
 }
 
-func addServiceToPool(r *parseResult, pool map[string]proto.Message, errs *errorHandler, prefix string, sd *dpb.ServiceDescriptorProto) error {
+func addServiceToPool(r *parseResult, pool map[string]proto.Message, errs *errorHandler, prefix string, sd *descriptorpb.ServiceDescriptorProto) error {
 	fqn := prefix + sd.GetName()
 	if err := addToPool(r, pool, errs, fqn, sd); err != nil {
 		return err
@@ -226,25 +224,25 @@ func addToPool(r *parseResult, pool map[string]proto.Message, errs *errorHandler
 
 func descriptorType(m proto.Message) string {
 	switch m := m.(type) {
-	case *dpb.DescriptorProto:
+	case *descriptorpb.DescriptorProto:
 		return "message"
-	case *dpb.DescriptorProto_ExtensionRange:
+	case *descriptorpb.DescriptorProto_ExtensionRange:
 		return "extension range"
-	case *dpb.FieldDescriptorProto:
+	case *descriptorpb.FieldDescriptorProto:
 		if m.GetExtendee() == "" {
 			return "field"
 		} else {
 			return "extension"
 		}
-	case *dpb.EnumDescriptorProto:
+	case *descriptorpb.EnumDescriptorProto:
 		return "enum"
-	case *dpb.EnumValueDescriptorProto:
+	case *descriptorpb.EnumValueDescriptorProto:
 		return "enum value"
-	case *dpb.ServiceDescriptorProto:
+	case *descriptorpb.ServiceDescriptorProto:
 		return "service"
-	case *dpb.MethodDescriptorProto:
+	case *descriptorpb.MethodDescriptorProto:
 		return "method"
-	case *dpb.FileDescriptorProto:
+	case *descriptorpb.FileDescriptorProto:
 		return "file"
 	default:
 		// shouldn't be possible
@@ -253,7 +251,6 @@ func descriptorType(m proto.Message) string {
 }
 
 func (l *linker) resolveReferences() error {
-	l.extensions = map[string]map[int32]string{}
 	for _, filename := range l.filenames {
 		r := l.files[filename]
 		fd := r.fd
@@ -291,7 +288,7 @@ func (l *linker) resolveReferences() error {
 	return nil
 }
 
-func (l *linker) resolveEnumTypes(r *parseResult, fd *dpb.FileDescriptorProto, prefix string, ed *dpb.EnumDescriptorProto, scopes []scope) error {
+func (l *linker) resolveEnumTypes(r *parseResult, fd *descriptorpb.FileDescriptorProto, prefix string, ed *descriptorpb.EnumDescriptorProto, scopes []scope) error {
 	enumFqn := prefix + ed.GetName()
 	if ed.Options != nil {
 		if err := l.resolveOptions(r, fd, "enum", enumFqn, proto.MessageName(ed.Options), ed.Options.UninterpretedOption, scopes); err != nil {
@@ -309,7 +306,7 @@ func (l *linker) resolveEnumTypes(r *parseResult, fd *dpb.FileDescriptorProto, p
 	return nil
 }
 
-func (l *linker) resolveMessageTypes(r *parseResult, fd *dpb.FileDescriptorProto, prefix string, md *dpb.DescriptorProto, scopes []scope) error {
+func (l *linker) resolveMessageTypes(r *parseResult, fd *descriptorpb.FileDescriptorProto, prefix string, md *descriptorpb.DescriptorProto, scopes []scope) error {
 	fqn := prefix + md.GetName()
 	scope := messageScope(fqn, isProto3(fd), l.descriptorPool[fd])
 	scopes = append(scopes, scope)
@@ -352,7 +349,7 @@ func (l *linker) resolveMessageTypes(r *parseResult, fd *dpb.FileDescriptorProto
 	return nil
 }
 
-func (l *linker) resolveFieldTypes(r *parseResult, fd *dpb.FileDescriptorProto, prefix string, fld *dpb.FieldDescriptorProto, scopes []scope) error {
+func (l *linker) resolveFieldTypes(r *parseResult, fd *descriptorpb.FileDescriptorProto, prefix string, fld *descriptorpb.FieldDescriptorProto, scopes []scope) error {
 	thisName := prefix + fld.GetName()
 	scope := fmt.Sprintf("field %s", thisName)
 	node := r.getFieldNode(fld)
@@ -363,7 +360,7 @@ func (l *linker) resolveFieldTypes(r *parseResult, fd *dpb.FileDescriptorProto, 
 		if dsc == nil {
 			return l.errs.handleErrorWithPos(node.fieldExtendee().start(), "unknown extendee type %s", fld.GetExtendee())
 		}
-		extd, ok := dsc.(*dpb.DescriptorProto)
+		extd, ok := dsc.(*descriptorpb.DescriptorProto)
 		if !ok {
 			otherType := descriptorType(dsc)
 			return l.errs.handleErrorWithPos(node.fieldExtendee().start(), "extendee is invalid: %s is a %s, not a message", fqn, otherType)
@@ -415,20 +412,20 @@ func (l *linker) resolveFieldTypes(r *parseResult, fd *dpb.FileDescriptorProto, 
 		return l.errs.handleErrorWithPos(node.fieldType().start(), "%s: unknown type %s", scope, fld.GetTypeName())
 	}
 	switch dsc := dsc.(type) {
-	case *dpb.DescriptorProto:
+	case *descriptorpb.DescriptorProto:
 		fld.TypeName = proto.String("." + fqn)
 		// if type was tentatively unset, we now know it's actually a message
 		if fld.Type == nil {
-			fld.Type = dpb.FieldDescriptorProto_TYPE_MESSAGE.Enum()
+			fld.Type = descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum()
 		}
-	case *dpb.EnumDescriptorProto:
+	case *descriptorpb.EnumDescriptorProto:
 		if fld.GetExtendee() == "" && isProto3(fd) && !proto3 {
 			// fields in a proto3 message cannot refer to proto2 enums
 			return l.errs.handleErrorWithPos(node.fieldType().start(), "%s: cannot use proto2 enum %s in a proto3 message", scope, fld.GetTypeName())
 		}
 		fld.TypeName = proto.String("." + fqn)
 		// the type was tentatively unset, but now we know it's actually an enum
-		fld.Type = dpb.FieldDescriptorProto_TYPE_ENUM.Enum()
+		fld.Type = descriptorpb.FieldDescriptorProto_TYPE_ENUM.Enum()
 	default:
 		otherType := descriptorType(dsc)
 		return l.errs.handleErrorWithPos(node.fieldType().start(), "%s: invalid type: %s is a %s, not a message or enum", scope, fqn, otherType)
@@ -436,7 +433,7 @@ func (l *linker) resolveFieldTypes(r *parseResult, fd *dpb.FileDescriptorProto, 
 	return nil
 }
 
-func (l *linker) resolveServiceTypes(r *parseResult, fd *dpb.FileDescriptorProto, prefix string, sd *dpb.ServiceDescriptorProto, scopes []scope) error {
+func (l *linker) resolveServiceTypes(r *parseResult, fd *descriptorpb.FileDescriptorProto, prefix string, sd *descriptorpb.ServiceDescriptorProto, scopes []scope) error {
 	thisName := prefix + sd.GetName()
 	if sd.Options != nil {
 		if err := l.resolveOptions(r, fd, "service", thisName, proto.MessageName(sd.Options), sd.Options.UninterpretedOption, scopes); err != nil {
@@ -457,7 +454,7 @@ func (l *linker) resolveServiceTypes(r *parseResult, fd *dpb.FileDescriptorProto
 			if err := l.errs.handleErrorWithPos(node.getInputType().start(), "%s: unknown request type %s", scope, mtd.GetInputType()); err != nil {
 				return err
 			}
-		} else if _, ok := dsc.(*dpb.DescriptorProto); !ok {
+		} else if _, ok := dsc.(*descriptorpb.DescriptorProto); !ok {
 			otherType := descriptorType(dsc)
 			if err := l.errs.handleErrorWithPos(node.getInputType().start(), "%s: invalid request type: %s is a %s, not a message", scope, fqn, otherType); err != nil {
 				return err
@@ -471,7 +468,7 @@ func (l *linker) resolveServiceTypes(r *parseResult, fd *dpb.FileDescriptorProto
 			if err := l.errs.handleErrorWithPos(node.getOutputType().start(), "%s: unknown response type %s", scope, mtd.GetOutputType()); err != nil {
 				return err
 			}
-		} else if _, ok := dsc.(*dpb.DescriptorProto); !ok {
+		} else if _, ok := dsc.(*descriptorpb.DescriptorProto); !ok {
 			otherType := descriptorType(dsc)
 			if err := l.errs.handleErrorWithPos(node.getOutputType().start(), "%s: invalid response type: %s is a %s, not a message", scope, fqn, otherType); err != nil {
 				return err
@@ -483,7 +480,7 @@ func (l *linker) resolveServiceTypes(r *parseResult, fd *dpb.FileDescriptorProto
 	return nil
 }
 
-func (l *linker) resolveOptions(r *parseResult, fd *dpb.FileDescriptorProto, elemType, elemName, optType string, opts []*dpb.UninterpretedOption, scopes []scope) error {
+func (l *linker) resolveOptions(r *parseResult, fd *descriptorpb.FileDescriptorProto, elemType, elemName, optType string, opts []*descriptorpb.UninterpretedOption, scopes []scope) error {
 	var scope string
 	if elemType != "file" {
 		scope = fmt.Sprintf("%s %s: ", elemType, elemName)
@@ -500,7 +497,7 @@ opts:
 					}
 					continue opts
 				}
-				if ext, ok := dsc.(*dpb.FieldDescriptorProto); !ok {
+				if ext, ok := dsc.(*descriptorpb.FieldDescriptorProto); !ok {
 					otherType := descriptorType(dsc)
 					if err := l.errs.handleErrorWithPos(node.start(), "%sinvalid extension: %s is a %s, not an extension", scope, nm.GetNamePart(), otherType); err != nil {
 						return err
@@ -519,10 +516,10 @@ opts:
 	return nil
 }
 
-func (l *linker) resolve(fd *dpb.FileDescriptorProto, name string, allowed func(proto.Message) bool, scopes []scope) (fqn string, element proto.Message, proto3 bool) {
+func (l *linker) resolve(fd *descriptorpb.FileDescriptorProto, name string, allowed func(proto.Message) bool, scopes []scope) (fqn string, element proto.Message, proto3 bool) {
 	if strings.HasPrefix(name, ".") {
 		// already fully-qualified
-		d, proto3 := l.findSymbol(fd, name[1:], false, map[*dpb.FileDescriptorProto]struct{}{})
+		d, proto3 := l.findSymbol(fd, name[1:], false, map[*descriptorpb.FileDescriptorProto]struct{}{})
 		if d != nil {
 			return name[1:], d, proto3
 		}
@@ -553,18 +550,18 @@ func (l *linker) resolve(fd *dpb.FileDescriptorProto, name string, allowed func(
 }
 
 func isField(m proto.Message) bool {
-	_, ok := m.(*dpb.FieldDescriptorProto)
+	_, ok := m.(*descriptorpb.FieldDescriptorProto)
 	return ok
 }
 
 func isMessage(m proto.Message) bool {
-	_, ok := m.(*dpb.DescriptorProto)
+	_, ok := m.(*descriptorpb.DescriptorProto)
 	return ok
 }
 
 func isType(m proto.Message) bool {
 	switch m.(type) {
-	case *dpb.DescriptorProto, *dpb.EnumDescriptorProto:
+	case *descriptorpb.DescriptorProto, *descriptorpb.EnumDescriptorProto:
 		return true
 	}
 	return false
@@ -574,7 +571,7 @@ func isType(m proto.Message) bool {
 // can be declared.
 type scope func(symbol string) (fqn string, element proto.Message, proto3 bool)
 
-func fileScope(fd *dpb.FileDescriptorProto, l *linker) scope {
+func fileScope(fd *descriptorpb.FileDescriptorProto, l *linker) scope {
 	// we search symbols in this file, but also symbols in other files that have
 	// the same package as this file or a "parent" package (in protobuf,
 	// packages are a hierarchy like C++ namespaces)
@@ -587,7 +584,7 @@ func fileScope(fd *dpb.FileDescriptorProto, l *linker) scope {
 			} else {
 				n = prefix + "." + name
 			}
-			d, proto3 := l.findSymbol(fd, n, false, map[*dpb.FileDescriptorProto]struct{}{})
+			d, proto3 := l.findSymbol(fd, n, false, map[*descriptorpb.FileDescriptorProto]struct{}{})
 			if d != nil {
 				return n, d, proto3
 			}
@@ -606,48 +603,13 @@ func messageScope(messageName string, proto3 bool, filePool map[string]proto.Mes
 	}
 }
 
-func (l *linker) findSymbol(fd *dpb.FileDescriptorProto, name string, public bool, checked map[*dpb.FileDescriptorProto]struct{}) (element proto.Message, proto3 bool) {
-	if _, ok := checked[fd]; ok {
-		// already checked this one
-		return nil, false
-	}
-	checked[fd] = struct{}{}
-	d := l.descriptorPool[fd][name]
-	if d != nil {
-		return d, isProto3(fd)
-	}
-
-	// When public = false, we are searching only directly imported symbols. But we
-	// also need to search transitive public imports due to semantics of public imports.
-	if public {
-		for _, depIndex := range fd.PublicDependency {
-			dep := fd.Dependency[depIndex]
-			depres := l.files[dep]
-			if depres == nil {
-				// we'll catch this error later
-				continue
-			}
-			if d, proto3 := l.findSymbol(depres.fd, name, true, checked); d != nil {
-				return d, proto3
-			}
-		}
-	} else {
-		for _, dep := range fd.Dependency {
-			depres := l.files[dep]
-			if depres == nil {
-				// we'll catch this error later
-				continue
-			}
-			if d, proto3 := l.findSymbol(depres.fd, name, true, checked); d != nil {
-				return d, proto3
-			}
-		}
-	}
-
-	return nil, false
+// TODO: consolidate with findElement
+func (l *linker) findSymbol(fd *descriptorpb.FileDescriptorProto, name string, public bool, checked map[*descriptorpb.FileDescriptorProto]struct{}) (element proto.Message, proto3 bool) {
+	fd, d := l.findElement(fd, name, public, checked)
+	return d, isProto3(fd)
 }
 
-func isProto3(fd *dpb.FileDescriptorProto) bool {
+func isProto3(fd *descriptorpb.FileDescriptorProto) bool {
 	return fd.GetSyntax() == "proto3"
 }
 
@@ -738,4 +700,68 @@ func (l *linker) linkFile(name string, rootImportLoc *SourcePos, seen []string, 
 	}
 	linked[name] = lfd
 	return lfd, nil
+}
+
+func (l *linker) checkMessageSets(res *parseResult) error {
+	prefix := res.fd.GetPackage()
+	if prefix != "" {
+		prefix = "."
+	}
+	for _, fld := range res.fd.GetExtension() {
+		if err := l.checkMessageSetsExtension(fld, prefix + fld.GetName(), res); err != nil {
+			return err
+		}
+	}
+	for _, md := range res.fd.GetMessageType() {
+		if err := l.checkMessageSetsMessage(md, prefix + md.GetName(), res); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (l *linker) checkMessageSetsMessage(md *descriptorpb.DescriptorProto, fqn string, res *parseResult) error {
+	if md.Options.GetMessageSetWireFormat() {
+		// Message set: must have at least one extension range and zero fields
+	}
+
+	for _, fld := range md.GetExtension() {
+		if err := l.checkMessageSetsExtension(fld, fqn + "." + fld.GetName(), res); err != nil {
+			return err
+		}
+	}
+	for _, nmd := range md.GetNestedType() {
+		if err := l.checkMessageSetsMessage(nmd, fqn + "." + md.GetName(), res); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (l *linker) checkMessageSetsExtension(fld *descriptorpb.FieldDescriptorProto, fqn string, res *parseResult) error {
+	// NB: This is kind of gross that we don't enforce this in validateBasic(). But it would
+	// require doing some minimal linking there (to identify the extendee and locate its
+	// descriptor). To keep the code simpler, we just wait until things are fully linked.
+
+	// In validateBasic() we just made sure these were within bounds for any message. But
+	// now that things are linked, we can check if the extendee is messageset wire format
+	// and, if not, enforce tighter limit.
+
+	md := l.findMessageType(res.fd, fld.GetExtendee())
+	if md.Options().(*descriptorpb.MessageOptions).GetMessageSetWireFormat() {
+		// Message set: extensions must be optional messages
+		if fld.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL {
+			pos := res.nodes[fld].(fieldDecl).fieldLabel().start()
+			return errorWithPos(pos, "field %q extends message set so must be an optional message", fld.GetName())
+		}
+		if fld.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+			pos := res.nodes[fld].(fieldDecl).fieldType().start()
+			return errorWithPos(pos, "field %q extends message set so must be an optional message", fld.GetName())
+		}
+	} else if fld.GetNumber() > internal.MaxNormalTag {
+		// NOT a message set, which means more restrictive range of tags
+		pos := res.nodes[fld].(fieldDecl).fieldTag().start()
+		return errorWithPos(pos, "tag number %d is higher than max allowed tag number (%d)", fld.GetNumber(), internal.MaxNormalTag)
+	}
+	return nil
 }

@@ -5,8 +5,7 @@ import (
 	"sort"
 
 	"github.com/golang/protobuf/proto"
-
-	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 func validateBasic(res *parseResult, containsErrors bool) {
@@ -32,7 +31,7 @@ func validateBasic(res *parseResult, containsErrors bool) {
 	}
 }
 
-func validateMessage(res *parseResult, isProto3 bool, prefix string, md *dpb.DescriptorProto, containsErrors bool) error {
+func validateMessage(res *parseResult, isProto3 bool, prefix string, md *descriptorpb.DescriptorProto, containsErrors bool) error {
 	nextPrefix := md.GetName() + "."
 
 	for _, fld := range md.Field {
@@ -184,7 +183,7 @@ func validateMessage(res *parseResult, isProto3 bool, prefix string, md *dpb.Des
 	return nil
 }
 
-func validateEnum(res *parseResult, isProto3 bool, prefix string, ed *dpb.EnumDescriptorProto, containsErrors bool) error {
+func validateEnum(res *parseResult, isProto3 bool, prefix string, ed *descriptorpb.EnumDescriptorProto, containsErrors bool) error {
 	scope := fmt.Sprintf("enum %s%s", prefix, ed.GetName())
 
 	if !containsErrors && len(ed.Value) == 0 {
@@ -281,21 +280,21 @@ func validateEnum(res *parseResult, isProto3 bool, prefix string, ed *dpb.EnumDe
 	return nil
 }
 
-func validateField(res *parseResult, isProto3 bool, prefix string, fld *dpb.FieldDescriptorProto) error {
+func validateField(res *parseResult, isProto3 bool, prefix string, fld *descriptorpb.FieldDescriptorProto) error {
 	scope := fmt.Sprintf("field %s%s", prefix, fld.GetName())
 
 	node := res.getFieldNode(fld)
 	if isProto3 {
-		if fld.GetType() == dpb.FieldDescriptorProto_TYPE_GROUP {
+		if fld.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 			n := node.(*groupNode)
 			if err := res.errs.handleErrorWithPos(n.groupKeyword.start(), "%s: groups are not allowed in proto3", scope); err != nil {
 				return err
 			}
-		} else if fld.Label != nil && fld.GetLabel() == dpb.FieldDescriptorProto_LABEL_REQUIRED {
+		} else if fld.Label != nil && fld.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REQUIRED {
 			if err := res.errs.handleErrorWithPos(node.fieldLabel().start(), "%s: label 'required' is not allowed in proto3", scope); err != nil {
 				return err
 			}
-		} else if fld.Extendee != nil && fld.Label != nil && fld.GetLabel() == dpb.FieldDescriptorProto_LABEL_OPTIONAL {
+		} else if fld.Extendee != nil && fld.Label != nil && fld.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL {
 			if err := res.errs.handleErrorWithPos(node.fieldLabel().start(), "%s: label 'optional' is not allowed on extensions in proto3", scope); err != nil {
 				return err
 			}
@@ -314,7 +313,7 @@ func validateField(res *parseResult, isProto3 bool, prefix string, fld *dpb.Fiel
 				return err
 			}
 		}
-		if fld.GetExtendee() != "" && fld.Label != nil && fld.GetLabel() == dpb.FieldDescriptorProto_LABEL_REQUIRED {
+		if fld.GetExtendee() != "" && fld.Label != nil && fld.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REQUIRED {
 			if err := res.errs.handleErrorWithPos(node.fieldLabel().start(), "%s: extension fields cannot be 'required'", scope); err != nil {
 				return err
 			}
@@ -323,7 +322,7 @@ func validateField(res *parseResult, isProto3 bool, prefix string, fld *dpb.Fiel
 
 	// finally, set any missing label to optional
 	if fld.Label == nil {
-		fld.Label = dpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+		fld.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
 	}
 
 	return nil

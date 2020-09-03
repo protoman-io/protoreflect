@@ -222,16 +222,19 @@ func (p Parser) ParseFiles(filenames ...string) ([]*desc.FileDescriptor, error) 
 		// TODO: if this re-writes one of the names in filenames, lookups below will break
 		protos = fixupFilenames(protos)
 	}
-	linkedProtos, err := newLinker(results, errs).linkFiles()
+	l := newLinker(results, errs)
+	err = l.linkFiles()
 	if err != nil {
 		return nil, err
 	}
 	if p.IncludeSourceCodeInfo {
-		for name, fd := range linkedProtos {
-			pr := protos[name]
-			fd.AsFileDescriptorProto().SourceCodeInfo = pr.generateSourceCodeInfo()
-			internal.RecomputeSourceInfo(fd)
+		for _, pr := range results.resultsByFilename {
+			pr.fd.SourceCodeInfo = pr.generateSourceCodeInfo()
 		}
+	}
+	linkedProtos, err := l.createdLinkedDescriptors()
+	if err != nil {
+		return nil, err
 	}
 	fds := make([]*desc.FileDescriptor, len(filenames))
 	for i, name := range filenames {
@@ -306,7 +309,7 @@ func (p Parser) ParseFilesButDoNotLink(filenames ...string) ([]*dpb.FileDescript
 				return err
 			}
 			var emptyLinker linker
-			_ = emptyLinker.interpretFileOptions(pr, fd)
+			_ = emptyLinker.interpretFileOptions(pr)
 		}
 		if p.IncludeSourceCodeInfo {
 			fd.SourceCodeInfo = pr.generateSourceCodeInfo()
@@ -746,49 +749,6 @@ func checkTag(pos *SourcePos, v uint64, maxTag int32) error {
 		return errorWithPos(pos, "tag number %d is higher than max allowed tag number (%d)", v, maxTag)
 	} else if v >= internal.SpecialReservedStart && v <= internal.SpecialReservedEnd {
 		return errorWithPos(pos, "tag number %d is in disallowed reserved range %d-%d", v, internal.SpecialReservedStart, internal.SpecialReservedEnd)
-	}
-	return nil
-}
-
-func checkExtensionTagsInFile(fd *desc.FileDescriptor, res *parseResult) error {
-	for _, fld := range fd.GetExtensions() {
-		if err := checkExtensionTag(fld, res); err != nil {
-			return err
-		}
-	}
-	for _, md := range fd.GetMessageTypes() {
-		if err := checkExtensionTagsInMessage(md, res); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func checkExtensionTagsInMessage(md *desc.MessageDescriptor, res *parseResult) error {
-	for _, fld := range md.GetNestedExtensions() {
-		if err := checkExtensionTag(fld, res); err != nil {
-			return err
-		}
-	}
-	for _, nmd := range md.GetNestedMessageTypes() {
-		if err := checkExtensionTagsInMessage(nmd, res); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func checkExtensionTag(fld *desc.FieldDescriptor, res *parseResult) error {
-	// NB: This is kind of gross that we don't enforce this in validateBasic(). But it would
-	// require doing some minimal linking there (to identify the extendee and locate its
-	// descriptor). To keep the code simpler, we just wait until things are fully linked.
-
-	// In validateBasic() we just made sure these were within bounds for any message. But
-	// now that things are linked, we can check if the extendee is messageset wire format
-	// and, if not, enforce tighter limit.
-	if !fld.GetOwner().GetMessageOptions().GetMessageSetWireFormat() && fld.GetNumber() > internal.MaxNormalTag {
-		pos := res.nodes[fld.AsFieldDescriptorProto()].(fieldDecl).fieldTag().start()
-		return errorWithPos(pos, "tag number %d is higher than max allowed tag number (%d)", fld.GetNumber(), internal.MaxNormalTag)
 	}
 	return nil
 }

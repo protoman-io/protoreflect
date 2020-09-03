@@ -3,14 +3,15 @@ package protoparse
 import (
 	"bytes"
 	"fmt"
-	"math"
-
 	"github.com/golang/protobuf/proto"
-	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
+	protov2 "google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
+	"math"
+	"strings"
 
-	"github.com/jhump/protoreflect/desc"
 	"github.com/jhump/protoreflect/desc/internal"
-	"github.com/jhump/protoreflect/dynamic"
 )
 
 func (l *linker) interpretFileOptions(r *parseResult) error {
@@ -72,7 +73,7 @@ func (l *linker) interpretFileOptions(r *parseResult) error {
 	return nil
 }
 
-func (l *linker) interpretMessageOptions(r *parseResult, fqn string, md *dpb.DescriptorProto) error {
+func (l *linker) interpretMessageOptions(r *parseResult, fqn string, md *descriptorpb.DescriptorProto) error {
 	opts := md.GetOptions()
 	if opts != nil {
 		if len(opts.UninterpretedOption) > 0 {
@@ -132,7 +133,7 @@ func (l *linker) interpretMessageOptions(r *parseResult, fqn string, md *dpb.Des
 	return nil
 }
 
-func (l *linker) interpretFieldOptions(r *parseResult, fqn string, fld *dpb.FieldDescriptorProto) error {
+func (l *linker) interpretFieldOptions(r *parseResult, fqn string, fld *descriptorpb.FieldDescriptorProto) error {
 	opts := fld.GetOptions()
 	if len(opts.GetUninterpretedOption()) > 0 {
 		uo := opts.UninterpretedOption
@@ -183,17 +184,17 @@ func (l *linker) interpretFieldOptions(r *parseResult, fqn string, fld *dpb.Fiel
 	return nil
 }
 
-func (l *linker) processDefaultOption(res *parseResult, scope string, fqn string, fld *dpb.FieldDescriptorProto, uos []*dpb.UninterpretedOption) (defaultIndex int, err error) {
+func (l *linker) processDefaultOption(res *parseResult, scope string, fqn string, fld *descriptorpb.FieldDescriptorProto, uos []*descriptorpb.UninterpretedOption) (defaultIndex int, err error) {
 	found, err := findOption(res, scope, uos, "default")
 	if err != nil || found == -1 {
 		return -1, err
 	}
 	opt := uos[found]
 	optNode := res.getOptionNode(opt)
-	if fld.GetLabel() == dpb.FieldDescriptorProto_LABEL_REPEATED {
+	if fld.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
 		return -1, res.errs.handleErrorWithPos(optNode.getName().start(), "%s: default value cannot be set because field is repeated", scope)
 	}
-	if fld.GetType() == dpb.FieldDescriptorProto_TYPE_GROUP || fld.GetType() == dpb.FieldDescriptorProto_TYPE_MESSAGE {
+	if fld.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP || fld.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
 		return -1, res.errs.handleErrorWithPos(optNode.getName().start(), "%s: default value cannot be set because field is a message", scope)
 	}
 	val := optNode.getValue()
@@ -207,9 +208,19 @@ func (l *linker) processDefaultOption(res *parseResult, scope string, fqn string
 		elementType: descriptorType(fld),
 		option:      opt,
 	}
-	v, err := l.fieldValue(res, mc, fld, val, true)
-	if err != nil {
-		return -1, res.errs.handleError(err)
+	var v interface{}
+	if fld.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+		ed := l.findEnumType(res.fd, fld.GetTypeName())
+		ev, err := l.enumFieldValue(mc, ed, val)
+		if err != nil {
+			return -1, res.errs.handleError(err)
+		}
+		v = string(ev.Name())
+	} else {
+		v, err = l.scalarFieldValue(mc, fld.GetType(), val)
+		if err != nil {
+			return -1, res.errs.handleError(err)
+		}
 	}
 	if str, ok := v.(string); ok {
 		fld.DefaultValue = proto.String(str)
@@ -247,7 +258,7 @@ func encodeDefaultBytes(b []byte) string {
 	return buf.String()
 }
 
-func (l *linker) interpretEnumOptions(r *parseResult, fqn string, ed *dpb.EnumDescriptorProto) error {
+func (l *linker) interpretEnumOptions(r *parseResult, fqn string, ed *descriptorpb.EnumDescriptorProto) error {
 	opts := ed.GetOptions()
 	if opts != nil {
 		if len(opts.UninterpretedOption) > 0 {
@@ -272,26 +283,33 @@ func (l *linker) interpretEnumOptions(r *parseResult, fqn string, ed *dpb.EnumDe
 	return nil
 }
 
-func (l *linker) interpretOptions(res *parseResult, fqn string, element proto.Message, opts proto.Message, uninterpreted []*dpb.UninterpretedOption) ([]*dpb.UninterpretedOption, error) {
-	optsd, err := desc.LoadMessageDescriptorForMessage(opts)
-	if err != nil {
-		if res.lenient {
-			return uninterpreted, nil
+func (l *linker) interpretOptions(res *parseResult, fqn string, element, opts proto.Message, uninterpreted []*descriptorpb.UninterpretedOption) ([]*descriptorpb.UninterpretedOption, error) {
+	var md protoreflect.MessageDescriptor
+	optsFqn := string(proto.MessageReflect(opts).Descriptor().FullName())
+	// see if the parse included an override copy for these options
+	for _, symbols := range l.descriptorPool {
+		if _, ok := symbols[optsFqn]; ok {
+			// it did! use that descriptor instead
+			md = l.findMessageType(res.fd, optsFqn)
+			if md != nil {
+				break
+			}
 		}
-		return nil, res.errs.handleError(err)
 	}
-	dm := dynamic.NewMessage(optsd)
-	err = dm.ConvertFrom(opts)
-	if err != nil {
-		if res.lenient {
-			return uninterpreted, nil
+	var msg protoreflect.Message
+	if md != nil {
+		dm := dynamicpb.NewMessage(md)
+		if err := cloneInto(dm, proto.MessageV2(opts)); err != nil {
+			node := res.nodes[element]
+			return nil, res.errs.handleError(ErrorWithSourcePos{Pos: node.start(), Underlying: err})
 		}
-		node := res.nodes[element]
-		return nil, res.errs.handleError(ErrorWithSourcePos{Pos: node.start(), Underlying: err})
+		msg = dm
+	} else {
+		msg = proto.MessageReflect(proto.Clone(opts))
 	}
 
 	mc := &messageContext{res: res, file: res.fd, elementName: fqn, elementType: descriptorType(element)}
-	var remain []*dpb.UninterpretedOption
+	var remain []*descriptorpb.UninterpretedOption
 	for _, uo := range uninterpreted {
 		node := res.getOptionNode(uo)
 		if !uo.Name[0].GetIsExtension() && uo.Name[0].GetNamePart() == "uninterpreted_option" {
@@ -305,7 +323,7 @@ func (l *linker) interpretOptions(res *parseResult, fqn string, element proto.Me
 			}
 		}
 		mc.option = uo
-		path, err := l.interpretField(res, mc, element, dm, uo, 0, nil)
+		path, err := l.interpretField(res, mc, element, msg, uo, 0, nil)
 		if err != nil {
 			if res.lenient {
 				remain = append(remain, uo)
@@ -322,7 +340,7 @@ func (l *linker) interpretOptions(res *parseResult, fqn string, element proto.Me
 		// If we're lenient, then we don't want to clobber the passed in message
 		// and leave it partially populated. So we convert into a copy first
 		optsClone := proto.Clone(opts)
-		if err := dm.ConvertToDeterministic(optsClone); err != nil {
+		if err := cloneInto(optsClone, msg.Interface()); err != nil {
 			// TODO: do this in a more granular way, so we can convert individual
 			// fields and leave bad ones uninterpreted instead of skipping all of
 			// the work we've done so far.
@@ -336,15 +354,16 @@ func (l *linker) interpretOptions(res *parseResult, fqn string, element proto.Me
 		return remain, nil
 	}
 
-	if err := dm.ValidateRecursive(); err != nil {
+
+	if err := validateRecursive(msg, ""); err != nil {
 		node := res.nodes[element]
 		if err := res.errs.handleErrorWithPos(node.start(), "error in %s options: %v", descriptorType(element), err); err != nil {
 			return nil, err
 		}
 	}
 
-	// nw try to convert into the passed in message and fail if not successful
-	if err := dm.ConvertToDeterministic(opts); err != nil {
+	// now try to convert into the passed in message and fail if not successful
+	if err := cloneInto(opts, msg.Interface()); err != nil {
 		node := res.nodes[element]
 		return nil, res.errs.handleError(ErrorWithSourcePos{Pos: node.start(), Underlying: err})
 	}
@@ -352,8 +371,84 @@ func (l *linker) interpretOptions(res *parseResult, fqn string, element proto.Me
 	return nil, nil
 }
 
-func (l *linker) interpretField(res *parseResult, mc *messageContext, element proto.Message, dm *dynamic.Message, opt *dpb.UninterpretedOption, nameIndex int, pathPrefix []int32) (path []int32, err error) {
-	var fld *desc.FieldDescriptor
+func cloneInto(dest proto.Message, src protov2.Message) error {
+	dest.Reset()
+	destV2 := proto.MessageV2(dest)
+	if destV2.ProtoReflect().Descriptor() == src.ProtoReflect().Descriptor() {
+		protov2.Merge(destV2, src)
+		if err := protov2.CheckInitialized(destV2); err != nil {
+			return err
+		}
+		return nil
+	}
+	// different descriptors means we must serialize
+	// and de-serialize in order to merge values
+	data, err := protov2.Marshal(src)
+	if err != nil {
+		return err
+	}
+	return protov2.Unmarshal(data, destV2)
+}
+
+func validateRecursive(msg protoreflect.Message, prefix string) error {
+	flds := msg.Descriptor().Fields()
+	var missingFields []string
+	for i := 0; i < flds.Len(); i++ {
+		fld := flds.Get(i)
+		if fld.Cardinality() == protoreflect.Required && !msg.Has(fld) {
+			missingFields = append(missingFields, fmt.Sprintf("%s%s", prefix, fld.Name()))
+		}
+	}
+	if len(missingFields) > 0 {
+		return fmt.Errorf("some required fields missing: %v", strings.Join(missingFields, ", "))
+	}
+
+	var err error
+	msg.Range(func(fld protoreflect.FieldDescriptor, val protoreflect.Value) bool {
+		if fld.IsMap() {
+			md := fld.MapValue().Message()
+			if md != nil {
+				val.Map().Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
+					chprefix := fmt.Sprintf("%s%s[%v].", prefix, fieldName(fld), k)
+					err = validateRecursive(v.Message(), chprefix)
+					if err != nil {
+						return false
+					}
+					return true
+				})
+				if err != nil {
+					return false
+				}
+			}
+		} else {
+			md := fld.Message()
+			if md != nil {
+				if fld.IsList() {
+					sl := val.List()
+					for i := 0; i < sl.Len(); i++ {
+						v := sl.Get(i)
+						chprefix := fmt.Sprintf("%s%s[%d].", prefix, fieldName(fld), i)
+						err = validateRecursive(v.Message(), chprefix)
+						if err != nil {
+							return false
+						}
+					}
+				} else {
+					chprefix := fmt.Sprintf("%s%s.", prefix, fieldName(fld))
+					err = validateRecursive(val.Message(), chprefix)
+					if err != nil {
+						return false
+					}
+				}
+			}
+		}
+		return true
+	})
+	return err
+}
+
+func (l *linker) interpretField(res *parseResult, mc *messageContext, element proto.Message, msg protoreflect.Message, opt *descriptorpb.UninterpretedOption, nameIndex int, pathPrefix []int32) (path []int32, err error) {
+	var fld protoreflect.FieldDescriptor
 	nm := opt.GetName()[nameIndex]
 	node := res.getOptionNamePartNode(nm)
 	if nm.GetIsExtension() {
@@ -361,106 +456,72 @@ func (l *linker) interpretField(res *parseResult, mc *messageContext, element pr
 		if extName[0] == '.' {
 			extName = extName[1:] /* skip leading dot */
 		}
-		fld = l.findExtension(res.fd, extName, false, map[*dpb.FileDescriptorProto]struct{}{})
+		fld = l.findExtension(res.fd, extName)
+		//fld = l.findExtension(res.fd, extName, false, map[*descriptorpb.FileDescriptorProto]struct{}{})
 		if fld == nil {
 			return nil, res.errs.handleErrorWithPos(node.start(),
 				"%vunrecognized extension %s of %s",
-				mc, extName, dm.GetMessageDescriptor().GetFullyQualifiedName())
+				mc, extName, msg.Descriptor().FullName())
 		}
-		if fld.GetOwner().GetFullyQualifiedName() != dm.GetMessageDescriptor().GetFullyQualifiedName() {
+		if fld.ContainingMessage().FullName() != msg.Descriptor().FullName() {
 			return nil, res.errs.handleErrorWithPos(node.start(),
 				"%vextension %s should extend %s but instead extends %s",
-				mc, extName, dm.GetMessageDescriptor().GetFullyQualifiedName(), fld.GetOwner().GetFullyQualifiedName())
+				mc, extName, msg.Descriptor().FullName(), fld.ContainingMessage().FullName())
 		}
 	} else {
-		fld = dm.GetMessageDescriptor().FindFieldByName(nm.GetNamePart())
+		fld = msg.Descriptor().Fields().ByName(protoreflect.Name(nm.GetNamePart()))
 		if fld == nil {
 			return nil, res.errs.handleErrorWithPos(node.start(),
 				"%vfield %s of %s does not exist",
-				mc, nm.GetNamePart(), dm.GetMessageDescriptor().GetFullyQualifiedName())
+				mc, nm.GetNamePart(), msg.Descriptor().FullName())
 		}
 	}
 
-	path = append(pathPrefix, fld.GetNumber())
+	path = append(pathPrefix, int32(fld.Number()))
 
 	if len(opt.GetName()) > nameIndex+1 {
 		nextnm := opt.GetName()[nameIndex+1]
 		nextnode := res.getOptionNamePartNode(nextnm)
-		if fld.GetType() != dpb.FieldDescriptorProto_TYPE_MESSAGE {
+		k := fld.Kind()
+		if k != protoreflect.MessageKind && k != protoreflect.GroupKind {
 			return nil, res.errs.handleErrorWithPos(nextnode.start(),
 				"%vcannot set field %s because %s is not a message",
 				mc, nextnm.GetNamePart(), nm.GetNamePart())
 		}
-		if fld.IsRepeated() {
+		if fld.Cardinality() == protoreflect.Repeated {
 			return nil, res.errs.handleErrorWithPos(nextnode.start(),
 				"%vcannot set field %s because %s is repeated (must use an aggregate)",
 				mc, nextnm.GetNamePart(), nm.GetNamePart())
 		}
-		var fdm *dynamic.Message
-		var err error
-		if dm.HasField(fld) {
-			var v interface{}
-			v, err = dm.TryGetField(fld)
-			fdm, _ = v.(*dynamic.Message)
+		var fdm protoreflect.Message
+		if msg.Has(fld) {
+			v := msg.Mutable(fld)
+			fdm = v.Message()
 		} else {
-			fdm = dynamic.NewMessage(fld.GetMessageType())
-			err = dm.TrySetField(fld, fdm)
-		}
-		if err != nil {
-			return nil, res.errs.handleError(ErrorWithSourcePos{Pos: node.start(), Underlying: err})
+			fdm = dynamicpb.NewMessage(fld.Message())
+			msg.Set(fld, protoreflect.ValueOfMessage(fdm))
 		}
 		// recurse to set next part of name
 		return l.interpretField(res, mc, element, fdm, opt, nameIndex+1, path)
 	}
 
 	optNode := res.getOptionNode(opt)
-	if err := l.setOptionField(res, mc, dm, fld, node, optNode.getValue()); err != nil {
+	if err := l.setOptionField(res, mc, msg, fld, node, optNode.getValue()); err != nil {
 		return nil, res.errs.handleError(err)
 	}
-	if fld.IsRepeated() {
-		path = append(path, int32(dm.FieldLength(fld))-1)
+	if fld.IsMap() {
+		path = append(path, int32(msg.Get(fld).Map().Len()))
+	} else if fld.IsList() {
+		path = append(path, int32(msg.Get(fld).List().Len()))
 	}
 	return path, nil
 }
 
-func (l *linker) findExtension(fd *dpb.FileDescriptorProto, name string, public bool, checked map[*dpb.FileDescriptorProto]struct{}) *desc.FieldDescriptor {
-	if _, ok := checked[fd]; ok {
-		return nil
-	}
-	checked[fd] = struct{}{}
-	d := fd.FindSymbol(name)
-	if d != nil {
-		if fld, ok := d.(*desc.FieldDescriptor); ok {
-			return fld
-		}
-		return nil
-	}
-
-	// When public = false, we are searching only directly imported symbols. But we
-	// also need to search transitive public imports due to semantics of public imports.
-	if public {
-		for _, dep := range fd.GetPublicDependencies() {
-			d := l.findExtension(dep, name, true, checked)
-			if d != nil {
-				return d
-			}
-		}
-	} else {
-		for _, dep := range fd.GetDependencies() {
-			d := l.findExtension(dep, name, true, checked)
-			if d != nil {
-				return d
-			}
-		}
-	}
-	return nil
-}
-
-func (l *linker) setOptionField(res *parseResult, mc *messageContext, dm *dynamic.Message, fld *dpb.FieldDescriptorProto, name node, val valueNode) error {
+func (l *linker) setOptionField(res *parseResult, mc *messageContext, msg protoreflect.Message, fld protoreflect.FieldDescriptor, name node, val valueNode) error {
 	v := val.value()
 	if sl, ok := v.([]valueNode); ok {
 		// handle slices a little differently than the others
-		if fld.GetLabel() != dpb.FieldDescriptorProto_LABEL_REPEATED {
+		if fld.Cardinality() != protoreflect.Repeated {
 			return errorWithPos(val.start(), "%vvalue is an array but field is not repeated", mc)
 		}
 		origPath := mc.optAggPath
@@ -469,35 +530,50 @@ func (l *linker) setOptionField(res *parseResult, mc *messageContext, dm *dynami
 		}()
 		for index, item := range sl {
 			mc.optAggPath = fmt.Sprintf("%s[%d]", origPath, index)
-			if v, err := l.fieldValue(res, mc, fld, item, false); err != nil {
+			value, err := l.fieldValue(res, mc, fld, item, false)
+			if err != nil {
 				return err
-			} else if err = dm.TryAddRepeatedField(fld, v); err != nil {
-				return errorWithPos(val.start(), "%verror setting value: %s", mc, err)
+			}
+			if fld.IsMap() {
+				entry := value.Message()
+				key := entry.Get(fld.MapKey()).MapKey()
+				val := entry.Get(fld.MapValue())
+				if dm, ok := val.Interface().(*dynamicpb.Message); ok && (dm == nil || !dm.IsValid()) {
+					val = protoreflect.ValueOfMessage(dynamicpb.NewMessage(fld.MapValue().Message()))
+				}
+				msg.Mutable(fld).Map().Set(key, val)
+			} else {
+				msg.Mutable(fld).List().Append(value)
 			}
 		}
 		return nil
 	}
 
-	v, err := l.fieldValue(res, mc, fld, val, false)
+	value, err := l.fieldValue(res, mc, fld, val, false)
 	if err != nil {
 		return err
 	}
-	if fld.GetLabel() == dpb.FieldDescriptorProto_LABEL_REPEATED {
-		err = dm.TryAddRepeatedField(fld, v)
+	if fld.IsMap() {
+		entry := value.Message()
+		key := entry.Get(fld.MapKey()).MapKey()
+		val := entry.Get(fld.MapValue())
+		if dm, ok := val.Interface().(*dynamicpb.Message); ok && (dm == nil || !dm.IsValid()) {
+			val = protoreflect.ValueOfMessage(dynamicpb.NewMessage(fld.MapValue().Message()))
+		}
+		msg.Mutable(fld).Map().Set(key, val)
+	} else if fld.IsList() {
+		msg.Mutable(fld).List().Append(value)
 	} else {
-		if dm.HasField(fld) {
+		if msg.Has(fld) {
 			return errorWithPos(name.start(), "%vnon-repeated option field %s already set", mc, fieldName(fld))
 		}
-		err = dm.TrySetField(fld, v)
-	}
-	if err != nil {
-		return errorWithPos(val.start(), "%verror setting value: %s", mc, err)
+		msg.Set(fld, value)
 	}
 
 	return nil
 }
 
-func findOption(res *parseResult, scope string, opts []*dpb.UninterpretedOption, name string) (int, error) {
+func findOption(res *parseResult, scope string, opts []*descriptorpb.UninterpretedOption, name string) (int, error) {
 	found := -1
 	for i, opt := range opts {
 		if len(opt.Name) != 1 {
@@ -515,7 +591,7 @@ func findOption(res *parseResult, scope string, opts []*dpb.UninterpretedOption,
 	return found, nil
 }
 
-func removeOption(uo []*dpb.UninterpretedOption, indexToRemove int) []*dpb.UninterpretedOption {
+func removeOption(uo []*descriptorpb.UninterpretedOption, indexToRemove int) []*descriptorpb.UninterpretedOption {
 	if indexToRemove == 0 {
 		return uo[1:]
 	} else if indexToRemove == len(uo)-1 {
@@ -527,10 +603,10 @@ func removeOption(uo []*dpb.UninterpretedOption, indexToRemove int) []*dpb.Unint
 
 type messageContext struct {
 	res         *parseResult
-	file        *dpb.FileDescriptorProto
+	file        *descriptorpb.FileDescriptorProto
 	elementType string
 	elementName string
-	option      *dpb.UninterpretedOption
+	option      *descriptorpb.UninterpretedOption
 	optAggPath  string
 }
 
@@ -555,7 +631,7 @@ func (c *messageContext) String() string {
 	return ctx.String()
 }
 
-func writeOptionName(buf *bytes.Buffer, parts []*dpb.UninterpretedOption_NamePart) {
+func writeOptionName(buf *bytes.Buffer, parts []*descriptorpb.UninterpretedOption_NamePart) {
 	first := true
 	for _, p := range parts {
 		if first {
@@ -578,11 +654,11 @@ func writeOptionName(buf *bytes.Buffer, parts []*dpb.UninterpretedOption_NamePar
 	}
 }
 
-func fieldName(fld *desc.FieldDescriptor) string {
+func fieldName(fld protoreflect.FieldDescriptor) string {
 	if fld.IsExtension() {
-		return fld.GetFullyQualifiedName()
+		return fmt.Sprintf("(%s)", fld.FullName())
 	} else {
-		return fld.GetName()
+		return string(fld.Name())
 	}
 }
 
@@ -610,27 +686,21 @@ func valueKind(val interface{}) string {
 	}
 }
 
-func (l *linker) fieldValue(res *parseResult, mc *messageContext, fld *dpb.FieldDescriptorProto, val valueNode, enumAsString bool) (interface{}, error) {
-	v := val.value()
-	t := fld.GetType()
-	switch t {
-	case dpb.FieldDescriptorProto_TYPE_ENUM:
-		if id, ok := v.(identifier); ok {
-			ev := fld.GetEnumType().FindValueByName(string(id))
-			if ev == nil {
-				return nil, errorWithPos(val.start(), "%venum %s has no value named %s", mc, fld.GetEnumType().GetFullyQualifiedName(), id)
-			}
-			if enumAsString {
-				return ev.GetName(), nil
-			} else {
-				return ev.GetNumber(), nil
-			}
+func (l *linker) fieldValue(res *parseResult, mc *messageContext, fld protoreflect.FieldDescriptor, val valueNode, enumAsString bool) (protoreflect.Value, error) {
+	k := fld.Kind()
+	switch k {
+	case protoreflect.EnumKind:
+		evd, err := l.enumFieldValue(mc, fld.Enum(), val)
+		if err != nil {
+			return protoreflect.Value{}, err
 		}
-		return nil, errorWithPos(val.start(), "%vexpecting enum, got %s", mc, valueKind(v))
-	case dpb.FieldDescriptorProto_TYPE_MESSAGE, dpb.FieldDescriptorProto_TYPE_GROUP:
+		return protoreflect.ValueOfEnum(evd.Number()), nil
+
+	case protoreflect.MessageKind, protoreflect.GroupKind:
+		v := val.value()
 		if aggs, ok := v.([]*aggregateEntryNode); ok {
-			fmd := fld.GetMessageType()
-			fdm := dynamic.NewMessage(fmd)
+			fmd := fld.Message()
+			fdm := dynamicpb.NewMessage(fmd)
 			origPath := mc.optAggPath
 			defer func() {
 				mc.optAggPath = origPath
@@ -641,46 +711,71 @@ func (l *linker) fieldValue(res *parseResult, mc *messageContext, fld *dpb.Field
 				} else {
 					mc.optAggPath = origPath + "." + a.name.value()
 				}
-				var ffld *desc.FieldDescriptor
+				var ffld protoreflect.FieldDescriptor
 				if a.name.isExtension {
 					n := a.name.name.val
-					ffld = l.findExtension(mc.file, n, false, map[*dpb.FileDescriptorProto]struct{}{})
-					if ffld == nil {
-						// may need to qualify with package name
-						pkg := mc.file.GetPackage()
-						if pkg != "" {
-							ffld = l.findExtension(mc.file, pkg+"."+n, false, map[*dpb.FileDescriptorProto]struct{}{})
-						}
-					}
+					ffld = l.findExtension(res.fd, n)
+					//if ffld == nil {
+					//	// may need to qualify with package name
+					//	pkg := mc.file.GetPackage()
+					//	if pkg != "" {
+					//		ffld = resolveExtension(l, res.fd, pkg+"."+n)
+					//	}
+					//}
 				} else {
-					ffld = fmd.FindFieldByName(a.name.value())
+					ffld = fmd.Fields().ByName(protoreflect.Name(a.name.value()))
 				}
 				if ffld == nil {
-					return nil, errorWithPos(val.start(), "%vfield %s not found", mc, a.name.name.val)
+					return protoreflect.Value{}, errorWithPos(val.start(), "%vfield %s not found", mc, a.name.name.val)
 				}
 				if err := l.setOptionField(res, mc, fdm, ffld, a.name, a.val); err != nil {
-					return nil, err
+					return protoreflect.Value{}, err
 				}
 			}
-			return fdm, nil
+			return protoreflect.ValueOfMessage(fdm), nil
 		}
-		return nil, errorWithPos(val.start(), "%vexpecting message, got %s", mc, valueKind(v))
-	case dpb.FieldDescriptorProto_TYPE_BOOL:
+		return protoreflect.Value{}, errorWithPos(val.start(), "%vexpecting message, got %s", mc, valueKind(v))
+
+	default:
+		v, err := l.scalarFieldValue(mc, descriptorpb.FieldDescriptorProto_Type(k), val)
+		if err != nil {
+			return protoreflect.Value{}, err
+		}
+		return protoreflect.ValueOf(v), nil
+	}
+}
+
+func (l *linker) enumFieldValue(mc *messageContext, ed protoreflect.EnumDescriptor, val valueNode) (protoreflect.EnumValueDescriptor, error) {
+	v := val.value()
+	if id, ok := v.(identifier); ok {
+		ev := ed.Values().ByName(protoreflect.Name(id))
+		if ev == nil {
+			return nil, errorWithPos(val.start(), "%venum %s has no value named %s", mc, ed.FullName(), id)
+		}
+		return ev, nil
+	}
+	return nil, errorWithPos(val.start(), "%vexpecting enum, got %s", mc, valueKind(v))
+}
+
+func (l *linker) scalarFieldValue(mc *messageContext, fldType descriptorpb.FieldDescriptorProto_Type, val valueNode) (interface{}, error) {
+	v := val.value()
+	switch fldType {
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
 		if b, ok := v.(bool); ok {
 			return b, nil
 		}
 		return nil, errorWithPos(val.start(), "%vexpecting bool, got %s", mc, valueKind(v))
-	case dpb.FieldDescriptorProto_TYPE_BYTES:
+	case descriptorpb.FieldDescriptorProto_TYPE_BYTES:
 		if str, ok := v.(string); ok {
 			return []byte(str), nil
 		}
 		return nil, errorWithPos(val.start(), "%vexpecting bytes, got %s", mc, valueKind(v))
-	case dpb.FieldDescriptorProto_TYPE_STRING:
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING:
 		if str, ok := v.(string); ok {
 			return str, nil
 		}
 		return nil, errorWithPos(val.start(), "%vexpecting string, got %s", mc, valueKind(v))
-	case dpb.FieldDescriptorProto_TYPE_INT32, dpb.FieldDescriptorProto_TYPE_SINT32, dpb.FieldDescriptorProto_TYPE_SFIXED32:
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32, descriptorpb.FieldDescriptorProto_TYPE_SINT32, descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
 		if i, ok := v.(int64); ok {
 			if i > math.MaxInt32 || i < math.MinInt32 {
 				return nil, errorWithPos(val.start(), "%vvalue %d is out of range for int32", mc, i)
@@ -694,7 +789,7 @@ func (l *linker) fieldValue(res *parseResult, mc *messageContext, fld *dpb.Field
 			return int32(ui), nil
 		}
 		return nil, errorWithPos(val.start(), "%vexpecting int32, got %s", mc, valueKind(v))
-	case dpb.FieldDescriptorProto_TYPE_UINT32, dpb.FieldDescriptorProto_TYPE_FIXED32:
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32, descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
 		if i, ok := v.(int64); ok {
 			if i > math.MaxUint32 || i < 0 {
 				return nil, errorWithPos(val.start(), "%vvalue %d is out of range for uint32", mc, i)
@@ -708,7 +803,7 @@ func (l *linker) fieldValue(res *parseResult, mc *messageContext, fld *dpb.Field
 			return uint32(ui), nil
 		}
 		return nil, errorWithPos(val.start(), "%vexpecting uint32, got %s", mc, valueKind(v))
-	case dpb.FieldDescriptorProto_TYPE_INT64, dpb.FieldDescriptorProto_TYPE_SINT64, dpb.FieldDescriptorProto_TYPE_SFIXED64:
+	case descriptorpb.FieldDescriptorProto_TYPE_INT64, descriptorpb.FieldDescriptorProto_TYPE_SINT64, descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
 		if i, ok := v.(int64); ok {
 			return i, nil
 		}
@@ -719,7 +814,7 @@ func (l *linker) fieldValue(res *parseResult, mc *messageContext, fld *dpb.Field
 			return int64(ui), nil
 		}
 		return nil, errorWithPos(val.start(), "%vexpecting int64, got %s", mc, valueKind(v))
-	case dpb.FieldDescriptorProto_TYPE_UINT64, dpb.FieldDescriptorProto_TYPE_FIXED64:
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT64, descriptorpb.FieldDescriptorProto_TYPE_FIXED64:
 		if i, ok := v.(int64); ok {
 			if i < 0 {
 				return nil, errorWithPos(val.start(), "%vvalue %d is out of range for uint64", mc, i)
@@ -730,7 +825,7 @@ func (l *linker) fieldValue(res *parseResult, mc *messageContext, fld *dpb.Field
 			return ui, nil
 		}
 		return nil, errorWithPos(val.start(), "%vexpecting uint64, got %s", mc, valueKind(v))
-	case dpb.FieldDescriptorProto_TYPE_DOUBLE:
+	case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
 		if d, ok := v.(float64); ok {
 			return d, nil
 		}
@@ -741,7 +836,7 @@ func (l *linker) fieldValue(res *parseResult, mc *messageContext, fld *dpb.Field
 			return float64(u), nil
 		}
 		return nil, errorWithPos(val.start(), "%vexpecting double, got %s", mc, valueKind(v))
-	case dpb.FieldDescriptorProto_TYPE_FLOAT:
+	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
 		if d, ok := v.(float64); ok {
 			if (d > math.MaxFloat32 || d < -math.MaxFloat32) && !math.IsInf(d, 1) && !math.IsInf(d, -1) && !math.IsNaN(d) {
 				return nil, errorWithPos(val.start(), "%vvalue %f is out of range for float", mc, d)
@@ -756,6 +851,6 @@ func (l *linker) fieldValue(res *parseResult, mc *messageContext, fld *dpb.Field
 		}
 		return nil, errorWithPos(val.start(), "%vexpecting float, got %s", mc, valueKind(v))
 	default:
-		return nil, errorWithPos(val.start(), "%vunrecognized field type: %s", mc, t)
+		return nil, errorWithPos(val.start(), "%vunrecognized field type: %s", mc, fldType)
 	}
 }
