@@ -9,7 +9,7 @@ import (
 
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
-	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
+	"google.golang.org/protobuf/types/descriptorpb"
 
 	"github.com/jhump/protoreflect/desc"
 	_ "github.com/jhump/protoreflect/internal/testprotos"
@@ -22,7 +22,7 @@ func TestSimpleLink(t *testing.T) {
 
 	b, err := ioutil.ReadFile("../../internal/testprotos/desc_test_complex.protoset")
 	testutil.Ok(t, err)
-	var files dpb.FileDescriptorSet
+	var files descriptorpb.FileDescriptorSet
 	err = proto.Unmarshal(b, &files)
 	testutil.Ok(t, err)
 	testutil.Require(t, proto.Equal(files.File[0], fds[0].AsProto()), "linked descriptor did not match output from protoc:\nwanted: %s\ngot: %s", toString(files.File[0]), toString(fds[0].AsProto()))
@@ -46,7 +46,7 @@ func TestProto3Optional(t *testing.T) {
 
 	data, err := ioutil.ReadFile("../../internal/testprotos/proto3_optional/desc_test_proto3_optional.protoset")
 	testutil.Ok(t, err)
-	var fdset dpb.FileDescriptorSet
+	var fdset descriptorpb.FileDescriptorSet
 	err = proto.Unmarshal(data, &fdset)
 	testutil.Ok(t, err)
 

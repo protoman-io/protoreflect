@@ -4,13 +4,13 @@ import (
 	"strings"
 
 	"github.com/golang/protobuf/proto"
-	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 // ProcessProto3OptionalFields adds synthetic oneofs to the given message descriptor
 // for each proto3 optional field. It also updates the fields to have the correct
 // oneof index reference.
-func ProcessProto3OptionalFields(msgd *dpb.DescriptorProto) {
+func ProcessProto3OptionalFields(msgd *descriptorpb.DescriptorProto) {
 	var allNames map[string]struct{}
 	for _, fd := range msgd.Field {
 		if fd.GetProto3Optional() {
@@ -55,7 +55,7 @@ func ProcessProto3OptionalFields(msgd *dpb.DescriptorProto) {
 			}
 
 			fd.OneofIndex = proto.Int32(int32(len(msgd.OneofDecl)))
-			msgd.OneofDecl = append(msgd.OneofDecl, &dpb.OneofDescriptorProto{Name: proto.String(ooName)})
+			msgd.OneofDecl = append(msgd.OneofDecl, &descriptorpb.OneofDescriptorProto{Name: proto.String(ooName)})
 		}
 	}
 }
