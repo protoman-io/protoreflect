@@ -220,7 +220,7 @@ func (p Parser) ParseFiles(filenames ...string) ([]*desc.FileDescriptor, error) 
 	}
 	if p.InferImportPaths {
 		// TODO: if this re-writes one of the names in filenames, lookups below will break
-		protos = fixupFilenames(protos)
+		_ = fixupFilenames(protos)
 	}
 	l := newLinker(results, errs)
 	err = l.linkFiles()

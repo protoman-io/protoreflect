@@ -871,10 +871,14 @@ func createFieldDescriptor(f *ptype.Field, mr *MessageRegistry) *descriptor.Fiel
 		typ = descriptor.FieldDescriptorProto_TYPE_UINT64
 	}
 
+	var defaultVal *string
+	if f.DefaultValue != "" {
+		defaultVal = proto.String(f.DefaultValue)
+	}
 	return &descriptor.FieldDescriptorProto{
 		Name:         proto.String(f.Name),
 		Number:       proto.Int32(f.Number),
-		DefaultValue: proto.String(f.DefaultValue),
+		DefaultValue: defaultVal,
 		JsonName:     proto.String(f.JsonName),
 		OneofIndex:   oneOf,
 		TypeName:     proto.String(typeName),
