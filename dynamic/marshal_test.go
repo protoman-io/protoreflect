@@ -2,12 +2,12 @@ package dynamic
 
 import (
 	"fmt"
-	"github.com/golang/protobuf/protoc-gen-go/descriptor"
 	"math"
 	"reflect"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/protoc-gen-go/descriptor"
 
 	"github.com/jhump/protoreflect/desc"
 	"github.com/jhump/protoreflect/internal/testprotos"

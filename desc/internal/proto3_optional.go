@@ -1,9 +1,10 @@
 package internal
 
 import (
+	"strings"
+
 	"github.com/golang/protobuf/proto"
 	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
-	"strings"
 )
 
 // ProcessProto3OptionalFields adds synthetic oneofs to the given message descriptor

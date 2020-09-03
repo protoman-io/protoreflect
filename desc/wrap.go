@@ -2,8 +2,8 @@ package desc
 
 import (
 	"fmt"
-	"google.golang.org/protobuf/reflect/protodesc"
 
+	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
