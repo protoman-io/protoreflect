@@ -101,9 +101,7 @@ func (f *fileDescriptor) Extensions() protoreflect.ExtensionDescriptors {
 }
 
 func (f *fileDescriptor) Services() protoreflect.ServiceDescriptors {
-	// NB: no need to implement
-	return nil
-	//return &svcDescriptors{file: f, svcs: f.proto.GetService(), prefix: f.prefix, l: f.l}
+	return &svcDescriptors{file: f, svcs: f.proto.GetService(), prefix: f.prefix, l: f.l}
 }
 
 func (f *fileDescriptor) SourceLocations() protoreflect.SourceLocations {
@@ -744,7 +742,7 @@ func (f *fldDescriptor) HasJSONName() bool {
 }
 
 func (f *fldDescriptor) JSONName() string {
-	return f.JSONName()
+	return f.proto.GetJsonName()
 }
 
 func (f *fldDescriptor) TextName() string {
@@ -990,161 +988,161 @@ func (o oneofDescriptor) Fields() protoreflect.FieldDescriptors {
 	return &fldDescriptors{file: o.file, parent: o.parent, fields: fields, prefix: o.parent.fqn + ".", l: o.l}
 }
 
-//type svcDescriptors struct {
-//	protoreflect.ServiceDescriptors
-//	file   *fileDescriptor
-//	svcs []*descriptorpb.ServiceDescriptorProto
-//	prefix string
-//	l      *linker
-//}
-//
-//func (s *svcDescriptors) Len() int {
-//	return len(s.svcs)
-//}
-//
-//func (s *svcDescriptors) Get(i int) protoreflect.ServiceDescriptor {
-//	svc := s.svcs[i]
-//	return &svcDescriptor{file: s.file, index: i, fqn: s.prefix + svc.GetName(), proto: svc, l: s.l}
-//}
-//
-//func (s *svcDescriptors) ByName(n protoreflect.Name) protoreflect.ServiceDescriptor {
-//	for i, svc := range s.svcs {
-//		if svc.GetName() == string(n) {
-//			return s.Get(i)
-//		}
-//	}
-//	return nil
-//}
-//
-//type svcDescriptor struct {
-//	protoreflect.ServiceDescriptor
-//	file   *fileDescriptor
-//	index  int
-//	proto  *descriptorpb.ServiceDescriptorProto
-//	fqn    string
-//	l      *linker
-//}
-//
-//func (s *svcDescriptor) ParentFile() protoreflect.FileDescriptor {
-//	return s.file
-//}
-//
-//func (s *svcDescriptor) Parent() protoreflect.Descriptor {
-//	return s.file
-//}
-//
-//func (s *svcDescriptor) Index() int {
-//	return s.index
-//}
-//
-//func (s *svcDescriptor) Syntax() protoreflect.Syntax {
-//	return s.file.Syntax()
-//}
-//
-//func (s *svcDescriptor) Name() protoreflect.Name {
-//	return protoreflect.Name(s.proto.GetName())
-//}
-//
-//func (s *svcDescriptor) FullName() protoreflect.FullName {
-//	return protoreflect.FullName(s.fqn)
-//}
-//
-//func (s *svcDescriptor) IsPlaceholder() bool {
-//	return false
-//}
-//
-//func (s *svcDescriptor) Options() protoreflect.ProtoMessage {
-//	return s.proto.Options
-//}
-//
-//func (s *svcDescriptor) Methods() protoreflect.MethodDescriptors {
-//	return &mtdDescriptors{file: s.file, parent: s, mtds: s.proto.GetMethod(), prefix: s.fqn + ".", l: s.l}
-//}
-//
-//type mtdDescriptors struct {
-//	protoreflect.MethodDescriptors
-//	file   *fileDescriptor
-//	parent *svcDescriptor
-//	mtds   []*descriptorpb.MethodDescriptorProto
-//	prefix string
-//	l      *linker
-//}
-//
-//func (m *mtdDescriptors) Len() int {
-//	return len(m.mtds)
-//}
-//
-//func (m *mtdDescriptors) Get(i int) protoreflect.MethodDescriptor {
-//	mtd := m.mtds[i]
-//	return &mtdDescriptor{file: m.file, parent: m.parent, index: i, fqn: m.prefix + mtd.GetName(), proto: mtd, l: m.l}
-//}
-//
-//func (m *mtdDescriptors) ByName(n protoreflect.Name) protoreflect.MethodDescriptor {
-//	for i, svc := range m.mtds {
-//		if svc.GetName() == string(n) {
-//			return m.Get(i)
-//		}
-//	}
-//	return nil
-//}
-//
-//type mtdDescriptor struct {
-//	protoreflect.MethodDescriptor
-//	file   *fileDescriptor
-//	parent *svcDescriptor
-//	index  int
-//	proto  *descriptorpb.MethodDescriptorProto
-//	fqn    string
-//	l      *linker
-//}
-//
-//func (m *mtdDescriptor) ParentFile() protoreflect.FileDescriptor {
-//	return m.file
-//}
-//
-//func (m *mtdDescriptor) Parent() protoreflect.Descriptor {
-//	return m.parent
-//}
-//
-//func (m *mtdDescriptor) Index() int {
-//	return m.index
-//}
-//
-//func (m *mtdDescriptor) Syntax() protoreflect.Syntax {
-//	return m.file.Syntax()
-//}
-//
-//func (m *mtdDescriptor) Name() protoreflect.Name {
-//	return protoreflect.Name(m.proto.GetName())
-//}
-//
-//func (m *mtdDescriptor) FullName() protoreflect.FullName {
-//	return protoreflect.FullName(m.fqn)
-//}
-//
-//func (m *mtdDescriptor) IsPlaceholder() bool {
-//	return false
-//}
-//
-//func (m *mtdDescriptor) Options() protoreflect.ProtoMessage {
-//	return m.proto.Options
-//}
-//
-//func (m *mtdDescriptor) Input() protoreflect.MessageDescriptor {
-//	return m.l.findMessageType(m.proto.GetInputType())
-//}
-//
-//func (m *mtdDescriptor) Output() protoreflect.MessageDescriptor {
-//	return m.l.findMessageType(m.proto.GetOutputType())
-//}
-//
-//func (m *mtdDescriptor) IsStreamingClient() bool {
-//	return m.proto.GetClientStreaming()
-//}
-//
-//func (m *mtdDescriptor) IsStreamingServer() bool {
-//	return m.proto.GetServerStreaming()
-//}
+type svcDescriptors struct {
+	protoreflect.ServiceDescriptors
+	file   *fileDescriptor
+	svcs   []*descriptorpb.ServiceDescriptorProto
+	prefix string
+	l      *linker
+}
+
+func (s *svcDescriptors) Len() int {
+	return len(s.svcs)
+}
+
+func (s *svcDescriptors) Get(i int) protoreflect.ServiceDescriptor {
+	svc := s.svcs[i]
+	return &svcDescriptor{file: s.file, index: i, fqn: s.prefix + svc.GetName(), proto: svc, l: s.l}
+}
+
+func (s *svcDescriptors) ByName(n protoreflect.Name) protoreflect.ServiceDescriptor {
+	for i, svc := range s.svcs {
+		if svc.GetName() == string(n) {
+			return s.Get(i)
+		}
+	}
+	return nil
+}
+
+type svcDescriptor struct {
+	protoreflect.ServiceDescriptor
+	file  *fileDescriptor
+	index int
+	proto *descriptorpb.ServiceDescriptorProto
+	fqn   string
+	l     *linker
+}
+
+func (s *svcDescriptor) ParentFile() protoreflect.FileDescriptor {
+	return s.file
+}
+
+func (s *svcDescriptor) Parent() protoreflect.Descriptor {
+	return s.file
+}
+
+func (s *svcDescriptor) Index() int {
+	return s.index
+}
+
+func (s *svcDescriptor) Syntax() protoreflect.Syntax {
+	return s.file.Syntax()
+}
+
+func (s *svcDescriptor) Name() protoreflect.Name {
+	return protoreflect.Name(s.proto.GetName())
+}
+
+func (s *svcDescriptor) FullName() protoreflect.FullName {
+	return protoreflect.FullName(s.fqn)
+}
+
+func (s *svcDescriptor) IsPlaceholder() bool {
+	return false
+}
+
+func (s *svcDescriptor) Options() protoreflect.ProtoMessage {
+	return s.proto.Options
+}
+
+func (s *svcDescriptor) Methods() protoreflect.MethodDescriptors {
+	return &mtdDescriptors{file: s.file, parent: s, mtds: s.proto.GetMethod(), prefix: s.fqn + ".", l: s.l}
+}
+
+type mtdDescriptors struct {
+	protoreflect.MethodDescriptors
+	file   *fileDescriptor
+	parent *svcDescriptor
+	mtds   []*descriptorpb.MethodDescriptorProto
+	prefix string
+	l      *linker
+}
+
+func (m *mtdDescriptors) Len() int {
+	return len(m.mtds)
+}
+
+func (m *mtdDescriptors) Get(i int) protoreflect.MethodDescriptor {
+	mtd := m.mtds[i]
+	return &mtdDescriptor{file: m.file, parent: m.parent, index: i, fqn: m.prefix + mtd.GetName(), proto: mtd, l: m.l}
+}
+
+func (m *mtdDescriptors) ByName(n protoreflect.Name) protoreflect.MethodDescriptor {
+	for i, svc := range m.mtds {
+		if svc.GetName() == string(n) {
+			return m.Get(i)
+		}
+	}
+	return nil
+}
+
+type mtdDescriptor struct {
+	protoreflect.MethodDescriptor
+	file   *fileDescriptor
+	parent *svcDescriptor
+	index  int
+	proto  *descriptorpb.MethodDescriptorProto
+	fqn    string
+	l      *linker
+}
+
+func (m *mtdDescriptor) ParentFile() protoreflect.FileDescriptor {
+	return m.file
+}
+
+func (m *mtdDescriptor) Parent() protoreflect.Descriptor {
+	return m.parent
+}
+
+func (m *mtdDescriptor) Index() int {
+	return m.index
+}
+
+func (m *mtdDescriptor) Syntax() protoreflect.Syntax {
+	return m.file.Syntax()
+}
+
+func (m *mtdDescriptor) Name() protoreflect.Name {
+	return protoreflect.Name(m.proto.GetName())
+}
+
+func (m *mtdDescriptor) FullName() protoreflect.FullName {
+	return protoreflect.FullName(m.fqn)
+}
+
+func (m *mtdDescriptor) IsPlaceholder() bool {
+	return false
+}
+
+func (m *mtdDescriptor) Options() protoreflect.ProtoMessage {
+	return m.proto.Options
+}
+
+func (m *mtdDescriptor) Input() protoreflect.MessageDescriptor {
+	return m.l.findMessageType(m.file.proto, m.proto.GetInputType())
+}
+
+func (m *mtdDescriptor) Output() protoreflect.MessageDescriptor {
+	return m.l.findMessageType(m.file.proto, m.proto.GetOutputType())
+}
+
+func (m *mtdDescriptor) IsStreamingClient() bool {
+	return m.proto.GetClientStreaming()
+}
+
+func (m *mtdDescriptor) IsStreamingServer() bool {
+	return m.proto.GetServerStreaming()
+}
 
 func (l *linker) findMessageType(entryPoint *descriptorpb.FileDescriptorProto, fqn string) protoreflect.MessageDescriptor {
 	fqn = strings.TrimPrefix(fqn, ".")
@@ -1252,6 +1250,11 @@ func findParent(l *linker, file *fileDescriptor, fqn string) (protoreflect.Descr
 				return file, i
 			}
 		}
+		for i, ext := range file.proto.Extension {
+			if ext.GetName() == names[0] {
+				return file, i
+			}
+		}
 	}
 	for i, msg := range file.proto.MessageType {
 		if msg.GetName() == names[0] {
@@ -1259,20 +1262,37 @@ func findParent(l *linker, file *fileDescriptor, fqn string) (protoreflect.Descr
 				return file, i
 			}
 			md := l.asMessageDescriptor(msg, file, file, i, file.prefix+msg.GetName())
-			return findParentMessage(l, md, i, names[1:])
+			return findParentMessage(l, md, names[1:])
 		}
 	}
 	return nil, 0
 }
 
-func findParentMessage(l *linker, msg *msgDescriptor, index int, names []string) (protoreflect.MessageDescriptor, int) {
+func findParentMessage(l *linker, msg *msgDescriptor, names []string) (protoreflect.MessageDescriptor, int) {
+	if len(names) == 1 {
+		for i, en := range msg.proto.EnumType {
+			if en.GetName() == names[0] {
+				return msg, i
+			}
+		}
+		for i, ext := range msg.proto.Extension {
+			if ext.GetName() == names[0] {
+				return msg, i
+			}
+		}
+		for i, fld := range msg.proto.Field {
+			if fld.GetName() == names[0] {
+				return msg, i
+			}
+		}
+	}
 	for i, nested := range msg.proto.NestedType {
 		if nested.GetName() == names[0] {
 			if len(names) == 1 {
 				return msg, i
 			}
 			md := l.asMessageDescriptor(nested, msg.file, msg, i, msg.fqn+"."+nested.GetName())
-			return findParentMessage(l, md, i, names[1:])
+			return findParentMessage(l, md, names[1:])
 		}
 	}
 	return nil, 0

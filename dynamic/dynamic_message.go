@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/protoc-gen-go/descriptor"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/jhump/protoreflect/codec"
 	"github.com/jhump/protoreflect/desc"
@@ -2556,6 +2557,37 @@ func (m *Message) mergeFrom(pm proto.Message) error {
 		}
 	}
 
+	// With API v2, it is possible that the new protoreflect interfaces
+	// were used to store an extension, which means it can't be returned
+	// by proto.ExtensionDescs and it's also not in the unrecognized data.
+	// So we have a separate loop to trawl through it...
+	var err error
+	proto.MessageReflect(pm).Range(func(fld protoreflect.FieldDescriptor, val protoreflect.Value) bool {
+		if !fld.IsExtension() {
+			// normal field... we already got it above
+			return true
+		}
+		xt := fld.(protoreflect.ExtensionTypeDescriptor)
+		if _, ok := xt.Type().(*proto.ExtensionDesc); ok {
+			// known extension... we already got it above
+			return true
+		}
+		var fd *desc.FieldDescriptor
+		fd, err = desc.WrapField(fld)
+		if err != nil {
+			return false
+		}
+		v := convertProtoReflectValue(val)
+		if v, err = validFieldValue(fd, v); err != nil {
+			return false
+		}
+		values[fd] = v
+		return true
+	})
+	if err != nil {
+		return err
+	}
+
 	// now actually perform the merge
 	for fd, v := range values {
 		if err := mergeField(m, fd, v); err != nil {
@@ -2577,6 +2609,31 @@ func (m *Message) mergeFrom(pm proto.Message) error {
 		_ = m.UnmarshalMerge(unknownExtensions)
 	}
 	return nil
+}
+
+func convertProtoReflectValue(v protoreflect.Value) interface{} {
+	val := v.Interface()
+	switch val := val.(type) {
+	case protoreflect.Message:
+		return val.Interface()
+	case protoreflect.Map:
+		mp := make(map[interface{}]interface{}, val.Len())
+		val.Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
+			mp[convertProtoReflectValue(k.Value())] = convertProtoReflectValue(v)
+			return true
+		})
+		return mp
+	case protoreflect.List:
+		sl := make([]interface{}, val.Len())
+		for i := 0; i < val.Len(); i++ {
+			sl[i] = convertProtoReflectValue(val.Get(i))
+		}
+		return sl
+	case protoreflect.EnumNumber:
+		return int32(val)
+	default:
+		return val
+	}
 }
 
 // Validate checks that all required fields are present. It returns an error if any are absent.
