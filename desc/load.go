@@ -2,13 +2,14 @@ package desc
 
 import (
 	"fmt"
-	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
-	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/reflect/protoregistry"
 	"reflect"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
+	"google.golang.org/protobuf/types/descriptorpb"
+
 	"github.com/jhump/protoreflect/internal"
 )
 
@@ -211,7 +212,7 @@ func enumFromType(et reflect.Type) (protoEnum, error) {
 	return e, nil
 }
 
-func getDescriptorForEnum(enum protoEnum) (*dpb.FileDescriptorProto, []int, error) {
+func getDescriptorForEnum(enum protoEnum) (*descriptorpb.FileDescriptorProto, []int, error) {
 	fdb, path := enum.EnumDescriptor()
 	name := fmt.Sprintf("%T", enum)
 	fd, err := internal.DecodeFileDescriptor(name, fdb)

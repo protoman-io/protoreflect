@@ -3,12 +3,12 @@ package desc
 import (
 	"errors"
 	"fmt"
+	"strings"
+
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
-	"strings"
-
-	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
+	"google.golang.org/protobuf/types/descriptorpb"
 
 	"github.com/jhump/protoreflect/desc/internal"
 	intn "github.com/jhump/protoreflect/internal"
@@ -18,7 +18,7 @@ import (
 // The file's direct dependencies must be provided. If the given dependencies do not include
 // all of the file's dependencies or if the contents of the descriptors are internally
 // inconsistent (e.g. contain unresolvable symbols) then an error is returned.
-func CreateFileDescriptor(fd *dpb.FileDescriptorProto, deps ...*FileDescriptor) (*FileDescriptor, error) {
+func CreateFileDescriptor(fd *descriptorpb.FileDescriptorProto, deps ...*FileDescriptor) (*FileDescriptor, error) {
 	return createFileDescriptor(fd, deps, nil)
 }
 
@@ -62,7 +62,7 @@ func (r *descResolver) FindDescriptorByName(n protoreflect.FullName) (protorefle
 	return nil, protoregistry.NotFound
 }
 
-func createFileDescriptor(fd *dpb.FileDescriptorProto, deps []*FileDescriptor, r *ImportResolver) (*FileDescriptor, error) {
+func createFileDescriptor(fd *descriptorpb.FileDescriptorProto, deps []*FileDescriptor, r *ImportResolver) (*FileDescriptor, error) {
 	dr := &descResolver{files: deps, importResolver: r, fromPath: fd.GetName()}
 	d, err := protodesc.NewFile(fd, dr)
 	if err != nil {
@@ -82,7 +82,7 @@ func createFileDescriptor(fd *dpb.FileDescriptorProto, deps []*FileDescriptor, r
 	return convertFile(d, fd, cache)
 }
 
-func convertFile(d protoreflect.FileDescriptor, fd *dpb.FileDescriptorProto, cache descriptorCache) (*FileDescriptor, error) {
+func convertFile(d protoreflect.FileDescriptor, fd *descriptorpb.FileDescriptorProto, cache descriptorCache) (*FileDescriptor, error) {
 	ret := &FileDescriptor{
 		wrapped:    d,
 		proto:      fd,
@@ -175,15 +175,15 @@ func convertFile(d protoreflect.FileDescriptor, fd *dpb.FileDescriptorProto, cac
 // CreateFileDescriptors constructs a set of descriptors, one for each of the
 // given descriptor protos. The given set of descriptor protos must include all
 // transitive dependencies for every file.
-func CreateFileDescriptors(fds []*dpb.FileDescriptorProto) (map[string]*FileDescriptor, error) {
+func CreateFileDescriptors(fds []*descriptorpb.FileDescriptorProto) (map[string]*FileDescriptor, error) {
 	return createFileDescriptors(fds, nil)
 }
 
-func createFileDescriptors(fds []*dpb.FileDescriptorProto, r *ImportResolver) (map[string]*FileDescriptor, error) {
+func createFileDescriptors(fds []*descriptorpb.FileDescriptorProto, r *ImportResolver) (map[string]*FileDescriptor, error) {
 	if len(fds) == 0 {
 		return nil, nil
 	}
-	files := map[string]*dpb.FileDescriptorProto{}
+	files := map[string]*descriptorpb.FileDescriptorProto{}
 	resolved := map[string]*FileDescriptor{}
 	var name string
 	for _, fd := range fds {
@@ -202,13 +202,13 @@ func createFileDescriptors(fds []*dpb.FileDescriptorProto, r *ImportResolver) (m
 // ToFileDescriptorSet creates a FileDescriptorSet proto that contains all of the given
 // file descriptors and their transitive dependencies. The files are topologically sorted
 // so that a file will always appear after its dependencies.
-func ToFileDescriptorSet(fds ...*FileDescriptor) *dpb.FileDescriptorSet {
-	var fdps []*dpb.FileDescriptorProto
+func ToFileDescriptorSet(fds ...*FileDescriptor) *descriptorpb.FileDescriptorSet {
+	var fdps []*descriptorpb.FileDescriptorProto
 	addAllFiles(fds, &fdps, map[string]struct{}{})
-	return &dpb.FileDescriptorSet{File: fdps}
+	return &descriptorpb.FileDescriptorSet{File: fdps}
 }
 
-func addAllFiles(src []*FileDescriptor, results *[]*dpb.FileDescriptorProto, seen map[string]struct{}) {
+func addAllFiles(src []*FileDescriptor, results *[]*descriptorpb.FileDescriptorProto, seen map[string]struct{}) {
 	for _, fd := range src {
 		if _, ok := seen[fd.GetName()]; ok {
 			continue
@@ -224,11 +224,11 @@ func addAllFiles(src []*FileDescriptor, results *[]*dpb.FileDescriptorProto, see
 // the full set of transitive dependencies of that last file. This is the same format and
 // order used by protoc when emitting a FileDescriptorSet file with an invocation like so:
 //    protoc --descriptor_set_out=./test.protoset --include_imports -I. test.proto
-func CreateFileDescriptorFromSet(fds *dpb.FileDescriptorSet) (*FileDescriptor, error) {
+func CreateFileDescriptorFromSet(fds *descriptorpb.FileDescriptorSet) (*FileDescriptor, error) {
 	return createFileDescriptorFromSet(fds, nil)
 }
 
-func createFileDescriptorFromSet(fds *dpb.FileDescriptorSet, r *ImportResolver) (*FileDescriptor, error) {
+func createFileDescriptorFromSet(fds *descriptorpb.FileDescriptorSet, r *ImportResolver) (*FileDescriptor, error) {
 	result, err := createFileDescriptorsFromSet(fds, r)
 	if err != nil {
 		return nil, err
@@ -244,11 +244,11 @@ func createFileDescriptorFromSet(fds *dpb.FileDescriptorSet, r *ImportResolver) 
 // and be returned instead of the slice of descriptors. This is the same format used by
 // protoc when a FileDescriptorSet file with an invocation like so:
 //    protoc --descriptor_set_out=./test.protoset --include_imports -I. test.proto
-func CreateFileDescriptorsFromSet(fds *dpb.FileDescriptorSet) (map[string]*FileDescriptor, error) {
+func CreateFileDescriptorsFromSet(fds *descriptorpb.FileDescriptorSet) (map[string]*FileDescriptor, error) {
 	return createFileDescriptorsFromSet(fds, nil)
 }
 
-func createFileDescriptorsFromSet(fds *dpb.FileDescriptorSet, r *ImportResolver) (map[string]*FileDescriptor, error) {
+func createFileDescriptorsFromSet(fds *descriptorpb.FileDescriptorSet, r *ImportResolver) (map[string]*FileDescriptor, error) {
 	files := fds.GetFile()
 	if len(files) == 0 {
 		return nil, errors.New("file descriptor set is empty")
@@ -258,7 +258,7 @@ func createFileDescriptorsFromSet(fds *dpb.FileDescriptorSet, r *ImportResolver)
 
 // createFromSet creates a descriptor for the given filename. It recursively
 // creates descriptors for the given file's dependencies.
-func createFromSet(filename string, r *ImportResolver, seen []string, files map[string]*dpb.FileDescriptorProto, resolved map[string]*FileDescriptor) (*FileDescriptor, error) {
+func createFromSet(filename string, r *ImportResolver, seen []string, files map[string]*descriptorpb.FileDescriptorProto, resolved map[string]*FileDescriptor) (*FileDescriptor, error) {
 	for _, s := range seen {
 		if filename == s {
 			return nil, fmt.Errorf("cycle in imports: %s", strings.Join(append(seen, filename), " -> "))

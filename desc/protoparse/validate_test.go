@@ -278,10 +278,6 @@ func TestBasicValidation(t *testing.T) {
 
 	for i, tc := range testCases {
 		errs := newErrorHandler(nil, nil)
-		//p := Parser{Accessor: FileContentsFromMap(map[string]string{
-		//	"test.proto": tc.contents,
-		//})}
-		//_, err := p.ParseFiles("test.proto")
 		_ = parseProto("test.proto", strings.NewReader(tc.contents), errs, true)
 		err := errs.getError()
 		if tc.succeeds {

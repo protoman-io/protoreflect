@@ -723,6 +723,14 @@ func (l *linker) checkMessageSets(res *parseResult) error {
 func (l *linker) checkMessageSetsMessage(md *descriptorpb.DescriptorProto, fqn string, res *parseResult) error {
 	if md.Options.GetMessageSetWireFormat() {
 		// Message set: must have at least one extension range and zero fields
+		if len(md.Field) > 0 {
+			pos := res.nodes[md].start()
+			return errorWithPos(pos, "message %q is a message set so should have only extensions, not regular fields", md.GetName())
+		}
+		if len(md.ExtensionRange) == 0 {
+			pos := res.nodes[md].start()
+			return errorWithPos(pos, "message %q is a message set so should have only extensions, but has no extension ranges", md.GetName())
+		}
 	}
 
 	for _, fld := range md.GetExtension() {

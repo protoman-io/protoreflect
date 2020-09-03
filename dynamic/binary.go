@@ -71,6 +71,9 @@ func (m *Message) MarshalAppendDeterministic(b []byte) ([]byte, error) {
 }
 
 func (m *Message) marshal(b *codec.Buffer) error {
+	if m.GetMessageDescriptor().GetMessageOptions().GetMessageSetWireFormat() {
+		return fmt.Errorf("%s is a message set; marshaling message sets is not implemented", m.GetMessageDescriptor().GetFullyQualifiedName())
+	}
 	if err := m.marshalKnownFields(b); err != nil {
 		return err
 	}
@@ -150,6 +153,9 @@ func (m *Message) UnmarshalMerge(b []byte) error {
 }
 
 func (m *Message) unmarshal(buf *codec.Buffer, isGroup bool) error {
+	if m.GetMessageDescriptor().GetMessageOptions().GetMessageSetWireFormat() {
+		return fmt.Errorf("%s is a message set; unmarshaling message sets is not implemented", m.GetMessageDescriptor().GetFullyQualifiedName())
+	}
 	for !buf.EOF() {
 		fd, val, err := buf.DecodeFieldValue(m.FindFieldDescriptor, m.mf)
 		if err != nil {

@@ -3,13 +3,14 @@ package protoparse
 import (
 	"bytes"
 	"fmt"
+	"math"
+	"strings"
+
 	"github.com/golang/protobuf/proto"
 	protov2 "google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
-	"math"
-	"strings"
 
 	"github.com/jhump/protoreflect/desc/internal"
 )
@@ -456,7 +457,6 @@ func (l *linker) interpretField(res *parseResult, mc *messageContext, element pr
 			extName = extName[1:] /* skip leading dot */
 		}
 		fld = l.findExtension(res.fd, extName)
-		//fld = l.findExtension(res.fd, extName, false, map[*descriptorpb.FileDescriptorProto]struct{}{})
 		if fld == nil {
 			return nil, res.errs.handleErrorWithPos(node.start(),
 				"%vunrecognized extension %s of %s",
@@ -714,13 +714,13 @@ func (l *linker) fieldValue(res *parseResult, mc *messageContext, fld protorefle
 				if a.name.isExtension {
 					n := a.name.name.val
 					ffld = l.findExtension(res.fd, n)
-					//if ffld == nil {
-					//	// may need to qualify with package name
-					//	pkg := mc.file.GetPackage()
-					//	if pkg != "" {
-					//		ffld = resolveExtension(l, res.fd, pkg+"."+n)
-					//	}
-					//}
+					if ffld == nil {
+						// may need to qualify with package name
+						pkg := mc.file.GetPackage()
+						if pkg != "" {
+							ffld = l.findExtension(res.fd, pkg+"."+n)
+						}
+					}
 				} else {
 					ffld = fmd.Fields().ByName(protoreflect.Name(a.name.value()))
 				}

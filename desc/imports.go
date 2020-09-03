@@ -2,14 +2,14 @@ package desc
 
 import (
 	"fmt"
-	"google.golang.org/protobuf/reflect/protoregistry"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
-	dpb "github.com/golang/protobuf/protoc-gen-go/descriptor"
+	"google.golang.org/protobuf/reflect/protoregistry"
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 var (
@@ -315,28 +315,28 @@ func (r *ImportResolver) LoadFieldDescriptorForExtension(ext *proto.ExtensionDes
 // CreateFileDescriptor is the same as the package function of the same name,
 // but any alternate paths configured in this resolver are used when linking the
 // given descriptor proto.
-func (r *ImportResolver) CreateFileDescriptor(fdp *dpb.FileDescriptorProto, deps ...*FileDescriptor) (*FileDescriptor, error) {
+func (r *ImportResolver) CreateFileDescriptor(fdp *descriptorpb.FileDescriptorProto, deps ...*FileDescriptor) (*FileDescriptor, error) {
 	return createFileDescriptor(fdp, deps, r)
 }
 
 // CreateFileDescriptors is the same as the package function of the same name,
 // but any alternate paths configured in this resolver are used when linking the
 // given descriptor protos.
-func (r *ImportResolver) CreateFileDescriptors(fds []*dpb.FileDescriptorProto) (map[string]*FileDescriptor, error) {
+func (r *ImportResolver) CreateFileDescriptors(fds []*descriptorpb.FileDescriptorProto) (map[string]*FileDescriptor, error) {
 	return createFileDescriptors(fds, r)
 }
 
 // CreateFileDescriptorFromSet is the same as the package function of the same
 // name, but any alternate paths configured in this resolver are used when
 // linking the descriptor protos in the given set.
-func (r *ImportResolver) CreateFileDescriptorFromSet(fds *dpb.FileDescriptorSet) (*FileDescriptor, error) {
+func (r *ImportResolver) CreateFileDescriptorFromSet(fds *descriptorpb.FileDescriptorSet) (*FileDescriptor, error) {
 	return createFileDescriptorFromSet(fds, r)
 }
 
 // CreateFileDescriptorsFromSet is the same as the package function of the same
 // name, but any alternate paths configured in this resolver are used when
 // linking the descriptor protos in the given set.
-func (r *ImportResolver) CreateFileDescriptorsFromSet(fds *dpb.FileDescriptorSet) (map[string]*FileDescriptor, error) {
+func (r *ImportResolver) CreateFileDescriptorsFromSet(fds *descriptorpb.FileDescriptorSet) (map[string]*FileDescriptor, error) {
 	return createFileDescriptorsFromSet(fds, r)
 }
 

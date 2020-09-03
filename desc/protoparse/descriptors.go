@@ -2,12 +2,12 @@ package protoparse
 
 import (
 	"fmt"
-	"google.golang.org/protobuf/types/dynamicpb"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 // This file contains implementations of protoreflect.Descriptor. Note that
@@ -462,7 +462,12 @@ func (e *enumDescriptor) Options() protoreflect.ProtoMessage {
 }
 
 func (e *enumDescriptor) Values() protoreflect.EnumValueDescriptors {
-	return &enValDescriptors{file: e.file, parent: e, vals: e.proto.GetValue(), prefix: e.fqn + ".", l: e.l}
+	// Unlike all other elements, the fully-qualified name of enum values
+	// is NOT scoped to their parent element (the enum), but rather to
+	// the enum's parent element. This follows C++ scoping rules for
+	// enum values.
+	prefix := strings.TrimSuffix(e.fqn, e.proto.GetName())
+	return &enValDescriptors{file: e.file, parent: e, vals: e.proto.GetValue(), prefix: prefix, l: e.l}
 }
 
 func (e *enumDescriptor) ReservedNames() protoreflect.Names {
@@ -1179,12 +1184,6 @@ func (l *linker) findEnumType(entryPoint *descriptorpb.FileDescriptorProto, fqn 
 func (l *linker) findExtension(entryPoint *descriptorpb.FileDescriptorProto, fqn string) protoreflect.ExtensionDescriptor {
 	fqn = strings.TrimPrefix(fqn, ".")
 	fd, d := l.findElement(entryPoint, fqn, false, map[*descriptorpb.FileDescriptorProto]struct{}{})
-	if d == nil && entryPoint.GetPackage() != "" {
-		// references from inside aggregate literal value might be missing
-		// package, so qualify and try again
-		fqn = entryPoint.GetPackage() + "." + fqn
-		fd, d = l.findElement(entryPoint, fqn, false, map[*descriptorpb.FileDescriptorProto]struct{}{})
-	}
 	fld, ok := d.(*descriptorpb.FieldDescriptorProto)
 	if !ok {
 		return nil
