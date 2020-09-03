@@ -58,7 +58,7 @@ func (l *linker) linkFiles() error {
 		return err
 	}
 
- 	// Now that we have linked descriptors, we can interpret any uninterpreted
+	// Now that we have linked descriptors, we can interpret any uninterpreted
 	// options that remain.
 	for _, r := range l.files {
 		if err := l.interpretFileOptions(r); err != nil {
@@ -708,12 +708,12 @@ func (l *linker) checkMessageSets(res *parseResult) error {
 		prefix = "."
 	}
 	for _, fld := range res.fd.GetExtension() {
-		if err := l.checkMessageSetsExtension(fld, prefix + fld.GetName(), res); err != nil {
+		if err := l.checkMessageSetsExtension(fld, prefix+fld.GetName(), res); err != nil {
 			return err
 		}
 	}
 	for _, md := range res.fd.GetMessageType() {
-		if err := l.checkMessageSetsMessage(md, prefix + md.GetName(), res); err != nil {
+		if err := l.checkMessageSetsMessage(md, prefix+md.GetName(), res); err != nil {
 			return err
 		}
 	}
@@ -726,12 +726,12 @@ func (l *linker) checkMessageSetsMessage(md *descriptorpb.DescriptorProto, fqn s
 	}
 
 	for _, fld := range md.GetExtension() {
-		if err := l.checkMessageSetsExtension(fld, fqn + "." + fld.GetName(), res); err != nil {
+		if err := l.checkMessageSetsExtension(fld, fqn+"."+fld.GetName(), res); err != nil {
 			return err
 		}
 	}
 	for _, nmd := range md.GetNestedType() {
-		if err := l.checkMessageSetsMessage(nmd, fqn + "." + md.GetName(), res); err != nil {
+		if err := l.checkMessageSetsMessage(nmd, fqn+"."+md.GetName(), res); err != nil {
 			return err
 		}
 	}

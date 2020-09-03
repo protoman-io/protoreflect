@@ -176,7 +176,7 @@ func (m *msgDescriptors) Len() int {
 
 func (m *msgDescriptors) Get(i int) protoreflect.MessageDescriptor {
 	msg := m.msgs[i]
-	return m.l.asMessageDescriptor(msg, m.file, m.parent, i, m.prefix + msg.GetName())
+	return m.l.asMessageDescriptor(msg, m.file, m.parent, i, m.prefix+msg.GetName())
 }
 
 func (m *msgDescriptors) ByName(s protoreflect.Name) protoreflect.MessageDescriptor {
@@ -400,7 +400,7 @@ func (e *enumDescriptors) Len() int {
 
 func (e *enumDescriptors) Get(i int) protoreflect.EnumDescriptor {
 	en := e.enums[i]
-	return e.l.asEnumDescriptor(en, e.file, e.parent, i, e.prefix + en.GetName())
+	return e.l.asEnumDescriptor(en, e.file, e.parent, i, e.prefix+en.GetName())
 }
 
 func (e *enumDescriptors) ByName(s protoreflect.Name) protoreflect.EnumDescriptor {
@@ -516,7 +516,7 @@ func (e *enValDescriptors) Len() int {
 
 func (e *enValDescriptors) Get(i int) protoreflect.EnumValueDescriptor {
 	val := e.vals[i]
-	return e.l.asEnumValueDescriptor(val, e.file, e.parent, i, e.prefix + val.GetName())
+	return e.l.asEnumValueDescriptor(val, e.file, e.parent, i, e.prefix+val.GetName())
 }
 
 func (e *enValDescriptors) ByName(s protoreflect.Name) protoreflect.EnumValueDescriptor {
@@ -606,7 +606,7 @@ func (e *extDescriptors) Len() int {
 
 func (e *extDescriptors) Get(i int) protoreflect.ExtensionDescriptor {
 	fld := e.exts[i]
-	return e.l.asFieldDescriptor(fld, e.file, e.parent, i, e.prefix + fld.GetName())
+	return e.l.asFieldDescriptor(fld, e.file, e.parent, i, e.prefix+fld.GetName())
 }
 
 func (e *extDescriptors) ByName(s protoreflect.Name) protoreflect.ExtensionDescriptor {
@@ -633,7 +633,7 @@ func (f *fldDescriptors) Len() int {
 
 func (f *fldDescriptors) Get(i int) protoreflect.FieldDescriptor {
 	fld := f.fields[i]
-	return f.l.asFieldDescriptor(fld, f.file, f.parent, i, f.prefix + fld.GetName())
+	return f.l.asFieldDescriptor(fld, f.file, f.parent, i, f.prefix+fld.GetName())
 }
 
 func (f *fldDescriptors) ByName(s protoreflect.Name) protoreflect.FieldDescriptor {
@@ -912,7 +912,7 @@ func (o *oneofDescriptors) Len() int {
 
 func (o *oneofDescriptors) Get(i int) protoreflect.OneofDescriptor {
 	oo := o.oneofs[i]
-	return o.l.asOneOfDescriptor(oo, o.file, o.parent, i, o.prefix + oo.GetName())
+	return o.l.asOneOfDescriptor(oo, o.file, o.parent, i, o.prefix+oo.GetName())
 }
 
 func (o *oneofDescriptors) ByName(s protoreflect.Name) protoreflect.OneofDescriptor {
@@ -1258,7 +1258,7 @@ func findParent(l *linker, file *fileDescriptor, fqn string) (protoreflect.Descr
 			if len(names) == 1 {
 				return file, i
 			}
-			md := l.asMessageDescriptor(msg, file, file, i, file.prefix + msg.GetName())
+			md := l.asMessageDescriptor(msg, file, file, i, file.prefix+msg.GetName())
 			return findParentMessage(l, md, i, names[1:])
 		}
 	}
@@ -1271,7 +1271,7 @@ func findParentMessage(l *linker, msg *msgDescriptor, index int, names []string)
 			if len(names) == 1 {
 				return msg, i
 			}
-			md := l.asMessageDescriptor(nested, msg.file, msg, i, msg.fqn + "." + nested.GetName())
+			md := l.asMessageDescriptor(nested, msg.file, msg, i, msg.fqn+"."+nested.GetName())
 			return findParentMessage(l, md, i, names[1:])
 		}
 	}

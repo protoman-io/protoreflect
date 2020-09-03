@@ -23,7 +23,7 @@ var (
 	// compatibility with old APIs, which required that they were
 	// registered in a different way :(
 	loadedEnumsMu sync.RWMutex
-	loadedEnums = map[reflect.Type]*EnumDescriptor{}
+	loadedEnums   = map[reflect.Type]*EnumDescriptor{}
 )
 
 // LoadFileDescriptor creates a file descriptor using the bytes returned by

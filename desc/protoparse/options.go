@@ -354,7 +354,6 @@ func (l *linker) interpretOptions(res *parseResult, fqn string, element, opts pr
 		return remain, nil
 	}
 
-
 	if err := validateRecursive(msg, ""); err != nil {
 		node := res.nodes[element]
 		if err := res.errs.handleErrorWithPos(node.start(), "error in %s options: %v", descriptorType(element), err); err != nil {
