@@ -509,9 +509,9 @@ func (l *linker) interpretField(res *parseResult, mc *messageContext, element pr
 		return nil, res.errs.handleError(err)
 	}
 	if fld.IsMap() {
-		path = append(path, int32(msg.Get(fld).Map().Len()))
+		path = append(path, int32(msg.Get(fld).Map().Len())-1)
 	} else if fld.IsList() {
-		path = append(path, int32(msg.Get(fld).List().Len()))
+		path = append(path, int32(msg.Get(fld).List().Len())-1)
 	}
 	return path, nil
 }
