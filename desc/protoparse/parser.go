@@ -227,6 +227,10 @@ func (p Parser) ParseFiles(filenames ...string) ([]*desc.FileDescriptor, error) 
 	if err != nil {
 		return nil, err
 	}
+	// Now we're done linking, so we can check to see if any imports were unused
+	for _, file := range filenames {
+		l.checkForUnusedImports(file)
+	}
 	if p.IncludeSourceCodeInfo {
 		for _, pr := range results.resultsByFilename {
 			pr.fd.SourceCodeInfo = pr.generateSourceCodeInfo()
